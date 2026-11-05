@@ -1,17 +1,34 @@
 #!/bin/bash
 # Focus a Hyprland window by address, after the overlay has a moment to unmap.
 # Address must already be a compositor id. No shell metacharacters are accepted.
+# An optional second address is one that blur-focus disarmed. Both get their
+# no_focus and focus_on_activate overrides cleared before the focus, so a
+# stashed client can take the seat again and a different stashed client is
+# not left unable to focus.
 set -euo pipefail
 
-address="${1:-}"
-address="${address#address:}"
-if [[ $address != 0x* ]]; then
-  address="0x${address}"
-fi
+normalize() {
+  local value=$1
+  value=${value#address:}
+  if [[ $value != 0x* && $value != 0X* ]]; then
+    value=0x${value}
+  fi
+  if [[ ! $value =~ ^0x[0-9a-fA-F]{1,32}$ ]]; then
+    echo "nitty-griddy: refusing to focus an address that is not a window id" >&2
+    return 2
+  fi
+  printf '%s' "$value"
+}
 
-if [[ ! $address =~ ^0x[0-9a-fA-F]{1,32}$ ]]; then
+if [[ $# -lt 1 || $# -gt 2 ]]; then
   echo "nitty-griddy: refusing to focus an address that is not a window id" >&2
   exit 2
+fi
+
+address=$(normalize "$1") || exit 2
+release=""
+if [[ $# -eq 2 ]]; then
+  release=$(normalize "$2") || exit 2
 fi
 
 delay="${NITTY_GRIDDY_FOCUS_DELAY:-0.18}"
@@ -19,6 +36,20 @@ if [[ ! $delay =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   delay=0.18
 fi
 sleep "$delay"
+
+clear_props() {
+  local target=$1
+  local script="(function() hl.dispatch(hl.dsp.window.set_prop({ prop = 'no_focus', value = 'unset', window = 'address:${target}' })); hl.dispatch(hl.dsp.window.set_prop({ prop = 'focus_on_activate', value = 'unset', window = 'address:${target}' })); end)()"
+  if ! hyprctl eval "$script" >/dev/null 2>&1; then
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"no_focus\", value = \"unset\", window = \"address:${target}\" })" >/dev/null 2>&1 || true
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"focus_on_activate\", value = \"unset\", window = \"address:${target}\" })" >/dev/null 2>&1 || true
+  fi
+}
+
+clear_props "$address"
+if [[ -n $release && $release != "$address" ]]; then
+  clear_props "$release"
+fi
 
 if ! hyprctl eval "hl.dispatch(hl.dsp.focus({ window = 'address:$address' }))" >/dev/null 2>&1; then
   hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null

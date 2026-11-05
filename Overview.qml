@@ -42,6 +42,12 @@ Item {
   property string selectedAddress: ""
   property int selectedIndex: -1
   property bool selectionPinned: false
+  // Window that was focused before this open. Restored on an empty dismiss.
+  property string priorAddress: ""
+  property bool opening: false
+  property bool restoreOnBlur: false
+  property bool blurAgain: false
+  property int blurToken: 0
   // Pressed card, copied at press time so a hover or a refresh cannot retarget the click.
   property bool pointerHold: false
   property int heldIndex: -1
@@ -89,6 +95,23 @@ Item {
   }
 
   function open(payloadJson) {
+    if (root.opened) {
+      root.presentGrid()
+      return
+    }
+    if (root.opening)
+      return
+    // Stash and blur before the overlay is interactive. An exclusive layer
+    // cannot clear the focused client once it is mapped.
+    root.opening = true
+    root.restoreOnBlur = false
+    root.priorAddress = root.focusedAddress()
+    root.launchBlur()
+  }
+
+  function presentGrid() {
+    root.opening = false
+    blurWait.stop()
     root.opened = true
     root.surfaceShown = true
     // A previous summon can leave a hold, a deferred rebuild, or a scroll
@@ -122,6 +145,148 @@ Item {
     root.playReveal()
   }
 
+  function launchBlur() {
+    // One blur at a time. A summon that arrives while hyprctl is still
+    // running waits for that process to exit, then starts the new one.
+    if (blurCapture.running) {
+      root.blurAgain = true
+      root.blurToken = root.blurToken + 1
+      blurCapture.token = -1
+      return
+    }
+    root.blurAgain = false
+    root.restoreOnBlur = false
+    root.blurToken = root.blurToken + 1
+    blurCapture.token = root.blurToken
+    blurWait.restart()
+    if (root.priorAddress)
+      blurCapture.command = [root.helper("blur-focus"), root.priorAddress]
+    else
+      blurCapture.command = [root.helper("blur-focus")]
+    blurCapture.running = true
+  }
+
+  function finishBlur() {
+    if (!root.opening || root.hiding)
+      return
+    root.presentGrid()
+  }
+
+  // The client Hyprland still considers focused. Prefer the in-process
+  // toplevel list; blur-focus reads `hyprctl activewindow -j` when this is empty.
+  function focusedAddress() {
+    var addr = ""
+    var i
+    try {
+      if (Hyprland.activeToplevel)
+        addr = root.hexAddress(Hyprland.activeToplevel.address)
+    } catch (e) {
+      addr = ""
+    }
+    if (addr)
+      return addr
+    var hypr = []
+    try {
+      if (Hyprland.toplevels && Hyprland.toplevels.values)
+        hypr = Hyprland.toplevels.values
+    } catch (e2) {
+      hypr = []
+    }
+    for (i = 0; i < hypr.length; i++) {
+      var item = hypr[i]
+      if (!item || !item.activated)
+        continue
+      addr = root.hexAddress(item.address)
+      if (addr)
+        return addr
+    }
+    var tops = []
+    try {
+      if (ToplevelManager.toplevels && ToplevelManager.toplevels.values)
+        tops = ToplevelManager.toplevels.values
+    } catch (e3) {
+      tops = []
+    }
+    for (i = 0; i < tops.length; i++) {
+      var top = tops[i]
+      if (!top)
+        continue
+      var attached = top.HyprlandToplevel || null
+      var activated = !!top.activated
+      if (attached && attached.activated !== undefined)
+        activated = !!attached.activated
+      if (!activated)
+        continue
+      addr = root.hexAddress(attached ? attached.address : "")
+      if (addr)
+        return addr
+    }
+    return ""
+  }
+
+  function clientStillMapped(address) {
+    if (!address)
+      return false
+    var i
+    if (root.allWindows && root.allWindows.length) {
+      for (i = 0; i < root.allWindows.length; i++) {
+        if (root.allWindows[i].address === address)
+          return true
+      }
+      return false
+    }
+    var hypr = []
+    try {
+      if (Hyprland.toplevels && Hyprland.toplevels.values)
+        hypr = Hyprland.toplevels.values
+    } catch (e) {
+      hypr = []
+    }
+    if (!hypr.length)
+      return true
+    for (i = 0; i < hypr.length; i++) {
+      if (hypr[i] && root.hexAddress(hypr[i].address) === address)
+        return true
+    }
+    return false
+  }
+
+  function scheduleRestore(address) {
+    if (!address || !root.clientStillMapped(address))
+      return
+    Quickshell.execDetached([root.helper("focus-window"), address])
+  }
+
+  function noteBlurAddress(line) {
+    var addr = root.hexAddress(line)
+    if (!addr)
+      return
+    if (blurCapture.token !== root.blurToken) {
+      if (addr !== root.priorAddress)
+        Quickshell.execDetached([root.helper("blur-focus"), "--release", addr])
+      return
+    }
+    if (root.opening || (root.opened && !root.priorAddress)) {
+      root.priorAddress = addr
+      return
+    }
+    if (root.restoreOnBlur && !root.opened) {
+      root.restoreOnBlur = false
+      root.scheduleRestore(addr)
+      return
+    }
+    if (!root.opened)
+      Quickshell.execDetached([root.helper("blur-focus"), "--release", addr])
+  }
+
+  function eventAddress(data) {
+    var text = String(data || "")
+    var match = text.match(/0x[0-9a-fA-F]{1,32}/)
+    if (match)
+      return root.hexAddress(match[0])
+    return root.hexAddress(text)
+  }
+
   // Screencopy and the shell can take active focus after open, and Esc then
   // falls through to the quake console. keyCatcher is zero-size and is not
   // stacked over the cards, so this reclaim never blocks the pointer. Keep it
@@ -142,6 +307,14 @@ Item {
   }
 
   function close() {
+    var prior = ""
+    if (!root.hiding && (root.opened || root.opening))
+      prior = root.priorAddress
+    if (!root.hiding && root.opening && !prior)
+      root.restoreOnBlur = true
+    root.priorAddress = ""
+    root.blurAgain = false
+    root.opening = false
     root.opened = false
     root.surfaceShown = false
     root.reveal = 0.96
@@ -152,20 +325,30 @@ Item {
     root.deferredRefresh = false
     root.hoverIgnoreUntil = 0
     root.scrollerInteractive = false
+    blurWait.stop()
     focusDebounce.stop()
     backdropTimer.stop()
     reconcileTimer.stop()
+    if (!root.hiding)
+      root.scheduleRestore(prior)
   }
 
   function dismiss() {
     if (root.hiding)
       return
+    if (!root.opened && !root.opening)
+      return
+    var prior = root.priorAddress
+    // A blur that has not reported its address yet should still restore.
+    root.restoreOnBlur = root.opening && !prior
+    root.priorAddress = ""
     root.hiding = true
     root.close()
     if (root.shell && typeof root.shell.hide === "function") {
       try { root.shell.hide(root.pluginId) } catch (e) {}
     }
     root.hiding = false
+    root.scheduleRestore(prior)
   }
 
   // Esc is accepted, then the grid hides. For a few hundred milliseconds the
@@ -208,7 +391,7 @@ Item {
       text = text.slice(2)
     if (!/^[0-9a-fA-F]{1,32}$/.test(text))
       return ""
-    return "0x" + text
+    return "0x" + text.toLowerCase()
   }
 
   function prettyApp(app) {
@@ -388,7 +571,6 @@ Item {
 
   function syncSelection(rows) {
     var found = -1
-    var i
     if (root.pointerHold && root.heldAddress) {
       found = root.indexOfAddress(rows, root.heldAddress)
       if (found >= 0) {
@@ -401,13 +583,10 @@ Item {
       found = root.indexOfAddress(rows, root.selectedAddress)
     if (found < 0) {
       if (!root.selectionPinned) {
-        found = rows.length ? 0 : -1
-        for (i = 0; i < rows.length; i++) {
-          if (rows[i].activated) {
-            found = i
-            break
-          }
-        }
+        // No card is selected until hover or a key move. The previously
+        // focused window stays in the list, but its activated flag does not
+        // preselect a card.
+        found = -1
       } else if (rows.length) {
         found = root.selectedIndex
         if (found < 0)
@@ -420,7 +599,8 @@ Item {
     }
     root.selectedIndex = found
     root.selectedAddress = found >= 0 ? rows[found].address : ""
-    root.selectionPinned = true
+    if (found >= 0)
+      root.selectionPinned = true
     if (found >= 0 && !root.pointerHold)
       Qt.callLater(function() { root.ensureVisible(found) })
   }
@@ -453,14 +633,16 @@ Item {
   function moveSelection(delta) {
     if (!root.windows.length)
       return
-    var index = root.selectedIndex
-    if (index < 0)
-      index = 0
-    var next = index + delta
-    if (next < 0)
-      next = 0
-    if (next >= root.windows.length)
-      next = root.windows.length - 1
+    var next
+    if (root.selectedIndex < 0)
+      next = delta < 0 ? root.windows.length - 1 : 0
+    else {
+      next = root.selectedIndex + delta
+      if (next < 0)
+        next = 0
+      if (next >= root.windows.length)
+        next = root.windows.length - 1
+    }
     root.selectionPinned = true
     root.selectedIndex = next
     root.selectedAddress = root.windows[next].address
@@ -481,8 +663,13 @@ Item {
 
   function setFilter(next) {
     root.filterText = next
-    root.selectionPinned = true
-    root.selectedAddress = ""
+    if (root.selectedIndex < 0) {
+      root.selectionPinned = false
+      root.selectedAddress = ""
+    } else {
+      root.selectionPinned = true
+      root.selectedAddress = ""
+    }
     root.applyFilter()
     root.reclaimFocus()
   }
@@ -491,7 +678,13 @@ Item {
     var clean = root.hexAddress(address)
     if (!clean)
       return
-    Quickshell.execDetached([root.helper("focus-window"), clean])
+    var prior = root.priorAddress
+    root.priorAddress = ""
+    root.restoreOnBlur = false
+    if (prior && prior !== clean)
+      Quickshell.execDetached([root.helper("focus-window"), clean, prior])
+    else
+      Quickshell.execDetached([root.helper("focus-window"), clean])
     root.dismiss()
   }
 
@@ -506,6 +699,10 @@ Item {
     if (!clean)
       return
     Quickshell.execDetached([root.helper("close-window"), clean])
+    if (clean === root.priorAddress) {
+      root.priorAddress = ""
+      Quickshell.execDetached([root.helper("blur-focus"), "--release", clean])
+    }
     var kept = []
     var i
     for (i = 0; i < root.allWindows.length; i++) {
@@ -673,6 +870,14 @@ Item {
     onTriggered: if (root.opened) root.refresh()
   }
 
+  // If hyprctl does not return, still show the grid. The blur may land late.
+  Timer {
+    id: blurWait
+    interval: 400
+    repeat: false
+    onTriggered: root.finishBlur()
+  }
+
   Connections {
     target: panel
     function onContentRevealedChanged() {
@@ -694,7 +899,13 @@ Item {
         root.handleCustom(data)
       else if (name.indexOf("tim.nitty-griddy:") === 0)
         root.handleCustom(name)
-      else if (root.opened && (name === "openwindow" || name === "closewindow" || name === "windowtitle" || name === "movewindow"))
+      else if (name === "closewindow") {
+        var gone = root.eventAddress(data)
+        if (gone && gone === root.priorAddress)
+          root.priorAddress = ""
+        if (root.opened)
+          root.refresh()
+      } else if (root.opened && (name === "openwindow" || name === "windowtitle" || name === "movewindow"))
         root.refresh()
     }
   }
@@ -713,6 +924,23 @@ Item {
       onRead: function(line) { root.addClientLine(line) }
     }
     onExited: function(exitCode) { root.finishList(exitCode) }
+  }
+
+  Process {
+    id: blurCapture
+    property int token: 0
+    command: [root.helper("blur-focus")]
+    stdout: SplitParser {
+      onRead: function(line) { root.noteBlurAddress(line) }
+    }
+    onExited: function(exitCode) {
+      if (root.blurAgain) {
+        root.launchBlur()
+        return
+      }
+      if (token === root.blurToken)
+        root.finishBlur()
+    }
   }
 
   IpcHandler {

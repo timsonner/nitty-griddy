@@ -39,7 +39,7 @@ while IFS= read -r path; do
   [[ -L $path ]] && fail "symlink not allowed: $path"
 done < <(find . -mindepth 1 \( -path './.git' -prune \) -o -print)
 
-for helper in helpers/focus-window helpers/close-window helpers/list-windows; do
+for helper in helpers/focus-window helpers/close-window helpers/list-windows helpers/blur-focus; do
   [[ -f $helper && -x $helper ]] || fail "$helper must be an executable file"
   bash -n "$helper"
 done
@@ -50,7 +50,7 @@ for token in \
   'function open' 'function close' 'function dismiss' \
   'tim.nitty-griddy:open' 'tim.nitty-griddy:close' \
   'Key_Escape' 'MiddleButton' 'ShiftModifier' \
-  'focus-window' 'close-window' 'Text.PlainText' \
+  'focus-window' 'close-window' 'blur-focus' 'priorAddress' 'Text.PlainText' \
   'shell.hide' 'ScreencopyView'
 do
   grep -q -- "$token" "$qml" || fail "Overview.qml missing $token"
@@ -95,6 +95,13 @@ if [[ ${1:-} == "-j" && ${2:-} == "clients" ]]; then
     {"address":"0xdef","mapped":False,"class":"ghost","title":"hidden","workspace":{"id":2,"name":"2"}},
     {"address":"0x123","mapped":True,"class":"firefox","title":"docs","workspace":{"id":3,"name":"web"}}
   ]))'
+fi
+if [[ ${1:-} == "activewindow" && ${2:-} == "-j" ]]; then
+  if [[ -n ${HYPRCTL_ACTIVE_JSON+x} ]]; then
+    printf '%s\n' "$HYPRCTL_ACTIVE_JSON"
+  else
+    printf '%s\n' '{"address":"0xabc"}'
+  fi
 fi
 exit 0
 SH
@@ -145,5 +152,72 @@ log=$tmp/delay.log
 HYPRCTL_LOG=$log NITTY_GRIDDY_FOCUS_DELAY='1;touch /tmp/nitty-griddy-delay' PATH="$tmp/bin:$PATH" ./helpers/focus-window 0x1
 [[ ! -e /tmp/nitty-griddy-delay ]] || fail "focus delay was evaluated"
 rm -f /tmp/nitty-griddy-delay
+
+# focus-window clears blur props, then focuses. A second address is released too.
+log=$tmp/focus-release.log
+HYPRCTL_LOG=$log NITTY_GRIDDY_FOCUS_DELAY=0 PATH="$tmp/bin:$PATH" ./helpers/focus-window 0xAbC 0x123
+grep -q "hl.dsp.focus" "$log" || fail "focus with a stashed address did not dispatch"
+grep -q "address:0xAbC" "$log" || fail "focus target missing when releasing a stash"
+grep -q "address:0x123" "$log" || fail "stashed address was not released"
+grep -q "no_focus" "$log" || fail "focus did not clear no_focus"
+grep -q "unset" "$log" || fail "focus did not unset the blur props"
+if HYPRCTL_LOG=$tmp/bad-second.log NITTY_GRIDDY_FOCUS_DELAY=0 PATH="$tmp/bin:$PATH" ./helpers/focus-window 0x1 '0xabc;touch /tmp/nitty-griddy-pwn2'; then
+  fail "focus accepted a non-address as the stashed window"
+fi
+[[ ! -e /tmp/nitty-griddy-pwn2 ]] || fail "focus executed an injected second address"
+rm -f /tmp/nitty-griddy-pwn2
+
+log=$tmp/blur.log
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/blur-focus 0xAbC >"$tmp/blur.out"
+grep -q "release_input_capture" "$log" || fail "blur did not release input capture"
+grep -q "no_focus" "$log" || fail "blur did not set no_focus"
+grep -q "focus_on_activate" "$log" || fail "blur did not set focus_on_activate"
+grep -q "address:0xAbC" "$log" || fail "blur address was rewritten or dropped"
+grep -q "value = '1'" "$log" || fail "blur did not enable no_focus"
+grep -q "value = '0'" "$log" || fail "blur did not disable focus_on_activate"
+if grep -q 'hl.dsp.focus(' "$log"; then
+  fail "blur focused a window"
+fi
+[[ $(tr -d '[:space:]' <"$tmp/blur.out") == "0xAbC" ]] || fail "blur did not print the address it disarmed"
+if HYPRCTL_LOG=$tmp/bad-blur.log PATH="$tmp/bin:$PATH" ./helpers/blur-focus '0xabc;touch /tmp/nitty-griddy-pwn3'; then
+  fail "blur accepted a non-address"
+fi
+[[ ! -e /tmp/nitty-griddy-pwn3 ]] || fail "blur executed injected shell"
+rm -f /tmp/nitty-griddy-pwn3
+
+log=$tmp/blur-active.log
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/blur-focus >"$tmp/blur-active.out"
+grep -q "address:0xabc" "$log" || fail "blur did not read the active window"
+[[ $(tr -d '[:space:]' <"$tmp/blur-active.out") == "0xabc" ]] || fail "blur did not report the active window"
+
+log=$tmp/blur-none.log
+HYPRCTL_LOG=$log HYPRCTL_ACTIVE_JSON='{}' PATH="$tmp/bin:$PATH" ./helpers/blur-focus >"$tmp/blur-none.out"
+[[ ! -s "$tmp/blur-none.out" ]] || fail "blur printed an address when nothing was focused"
+if grep -q "no_focus" "$log"; then
+  fail "blur dispatched when nothing was focused"
+fi
+
+log=$tmp/blur-bad-active.log
+HYPRCTL_LOG=$log HYPRCTL_ACTIVE_JSON='{"address":"$(reboot)"}' PATH="$tmp/bin:$PATH" ./helpers/blur-focus >"$tmp/blur-bad-active.out"
+[[ ! -s "$tmp/blur-bad-active.out" ]] || fail "blur printed a non-address from activewindow"
+if grep -q "no_focus" "$log"; then
+  fail "blur dispatched a non-address from activewindow"
+fi
+
+log=$tmp/release.log
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --release 0xabc >"$tmp/release.out"
+grep -q "no_focus" "$log" || fail "release did not touch no_focus"
+grep -q "focus_on_activate" "$log" || fail "release did not touch focus_on_activate"
+grep -q "unset" "$log" || fail "release did not unset blur props"
+[[ ! -s "$tmp/release.out" ]] || fail "release printed an address"
+if grep -q 'hl.dsp.focus(' "$log"; then
+  fail "release focused a window"
+fi
+if grep -q "release_input_capture" "$log"; then
+  fail "release captured input again"
+fi
+if HYPRCTL_LOG=$tmp/bad-release.log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --release '$(reboot)'; then
+  fail "release accepted a non-address"
+fi
 
 echo "validate: all checks passed"

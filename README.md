@@ -83,9 +83,9 @@ omarchy restart shell
 
 | Action | Result |
 |---|---|
-| Three-finger swipe up, or `omarchy-shell shell summon tim.nitty-griddy '{}'` | Grid opens with windows from all workspaces |
-| Three-finger swipe down, Esc, or a click on the empty backdrop | Grid dismisses. Down is a no-op when it is already closed |
-| Click a card, or Enter | Focus that window and dismiss the grid |
+| Three-finger swipe up, or `omarchy-shell shell summon tim.nitty-griddy '{}'` | Grid opens with windows from all workspaces. No card is selected. The window that was focused is remembered and deselected |
+| Three-finger swipe down, Esc, or a click on the empty backdrop | Grid dismisses and focus returns to that window if it is still open. Down is a no-op when it is already closed |
+| Click a card, or Enter | Focus that window and dismiss the grid. The previously focused window is not restored |
 | × on the card, middle-click, or Shift+Q | Close that window. The grid stays if others remain |
 | Arrow keys | Move the selection |
 | Type to filter | Narrow by title, app, or workspace. Backspace edits |

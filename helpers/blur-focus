@@ -1,0 +1,77 @@
+#!/bin/bash
+# Stop the client that was focused before the grid from owning activation.
+#
+# Hyprland has no unfocus dispatcher. hl.dsp.focus requires a window, and a
+# null window is a no-op. rawWindowFocus(nullptr) also returns without
+# clearing the focused client once an exclusive layer surface exists, so the
+# overlay's own keyboard grab cannot drop the window that was selected
+# before it mapped. That is the client that stays selected and fights presses.
+#
+# Least invasive equivalent that does not close, minimize, move, or change
+# workspace:
+#   1. hl.dsp.release_input_capture() drops a pointer or keyboard grab.
+#   2. no_focus=1 makes Hyprland ignore later focus attempts for this client
+#      ("Ignoring focus to nofocus window").
+#   3. focus_on_activate=0 stops an xdg activate from pulling the seat back.
+# Both props are set_prop overrides. focus-window unsets them before it
+# focuses. --release unsets them when the window is closed instead of focused.
+# With no address argument, the focused client is read from `hyprctl activewindow -j`.
+set -euo pipefail
+
+release=0
+if [[ ${1:-} == "--release" ]]; then
+  release=1
+  shift
+fi
+
+if [[ $# -gt 1 ]]; then
+  echo "nitty-griddy: refusing to blur an address that is not a window id" >&2
+  exit 2
+fi
+
+supplied=0
+address=""
+if [[ $# -eq 1 ]]; then
+  supplied=1
+  address=$1
+elif [[ $release -eq 0 ]]; then
+  json=$(hyprctl activewindow -j 2>/dev/null || true)
+  if [[ -n $json ]]; then
+    address=$(jq -r 'if type == "object" then (.address // "") else "" end' <<<"$json" 2>/dev/null || true)
+  fi
+  if [[ -z $address || $address == "null" ]]; then
+    exit 0
+  fi
+fi
+
+address=${address#address:}
+if [[ -n $address && $address != 0x* && $address != 0X* ]]; then
+  address=0x${address}
+fi
+
+if [[ ! $address =~ ^0x[0-9a-fA-F]{1,32}$ ]]; then
+  if [[ $supplied -eq 0 && $release -eq 0 ]]; then
+    exit 0
+  fi
+  echo "nitty-griddy: refusing to blur an address that is not a window id" >&2
+  exit 2
+fi
+
+# Keep the caller's hex case. The compositor accepts either.
+if [[ $release -eq 1 ]]; then
+  script="(function() hl.dispatch(hl.dsp.window.set_prop({ prop = 'no_focus', value = 'unset', window = 'address:${address}' })); hl.dispatch(hl.dsp.window.set_prop({ prop = 'focus_on_activate', value = 'unset', window = 'address:${address}' })); end)()"
+  if ! hyprctl eval "$script" >/dev/null 2>&1; then
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"no_focus\", value = \"unset\", window = \"address:${address}\" })" >/dev/null 2>&1 || true
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"focus_on_activate\", value = \"unset\", window = \"address:${address}\" })" >/dev/null 2>&1 || true
+  fi
+  exit 0
+fi
+
+script="(function() hl.dispatch(hl.dsp.release_input_capture()); hl.dispatch(hl.dsp.window.set_prop({ prop = 'no_focus', value = '1', window = 'address:${address}' })); hl.dispatch(hl.dsp.window.set_prop({ prop = 'focus_on_activate', value = '0', window = 'address:${address}' })); end)()"
+if ! hyprctl eval "$script" >/dev/null 2>&1; then
+  hyprctl dispatch "hl.dsp.release_input_capture()" >/dev/null 2>&1 || true
+  hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"no_focus\", value = \"1\", window = \"address:${address}\" })" >/dev/null 2>&1 || true
+  hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"focus_on_activate\", value = \"0\", window = \"address:${address}\" })" >/dev/null 2>&1 || true
+fi
+
+printf '%s\n' "$address"
