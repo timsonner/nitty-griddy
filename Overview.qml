@@ -702,7 +702,11 @@ Item {
     id: panel
     shown: root.surfaceShown
     shownKeyboardFocus: WlrKeyboardFocus.Exclusive
+    WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.namespace: "tim-nitty-griddy"
+    // The shell overlay defaults to a transparent surface. A transparent pixel
+    // with no input grab is a hole onto the desktop behind the grid.
+    color: root.scrim
 
     Shortcut {
       sequences: ["Esc"]
@@ -726,6 +730,10 @@ Item {
 
       ScreencopyView {
         id: shot
+        z: -2
+        // A full-screen capture of the monitor forwards pointer hits into the
+        // real desktop. It is only a blur source, never an input target.
+        enabled: false
         anchors.fill: parent
         opacity: 0
         visible: root.opened
@@ -736,6 +744,7 @@ Item {
       }
 
       MultiEffect {
+        z: -1
         anchors.fill: parent
         source: shot
         autoPaddingEnabled: true
@@ -746,13 +755,17 @@ Item {
       }
 
       Rectangle {
+        id: inputScrim
+        z: 1
         anchors.fill: parent
         color: root.scrim
       }
 
       MouseArea {
-        z: 0
+        id: backdropDismiss
+        z: 1
         anchors.fill: parent
+        preventStealing: true
         onPressed: function(mouse) {
           mouse.accepted = true
           root.dismiss()
@@ -766,7 +779,7 @@ Item {
         anchors.right: parent.right
         anchors.margins: root.pad
         height: Style.space(58)
-        z: 2
+        z: 3
 
         Text {
           textFormat: Text.PlainText
@@ -817,9 +830,10 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         // Don't let a short grid steal presses that belong to a card.
         interactive: contentHeight > height + 1
+        pressDelay: 0
         contentWidth: width
         contentHeight: Math.max(height, grid.height)
-        z: 2
+        z: 3
 
         Grid {
           id: grid
@@ -1056,7 +1070,7 @@ Item {
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
         text: "Click or Enter focuses · type to filter · × / middle-click / Shift+Q closes · Esc dismisses"
-        z: 2
+        z: 3
       }
 
       // Zero-size on purpose. A full-bleed catcher above the grid was taking
