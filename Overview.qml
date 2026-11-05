@@ -50,6 +50,8 @@ Item {
   property string pressedAddress: ""
   property bool deferredRefresh: false
   property real hoverIgnoreUntil: 0
+  // False while the grid is rebuilding. Flickable must not see that press.
+  property bool scrollerInteractive: false
   property int thumbGeneration: 0
   property bool swallowEsc: false
   property var pendingClients: []
@@ -87,9 +89,18 @@ Item {
   }
 
   function open(payloadJson) {
-    root.hiding = false
     root.opened = true
     root.surfaceShown = true
+    // A previous summon can leave a hold, a deferred rebuild, or a scroll
+    // offset. The next press then misses the card and only dismisses.
+    root.pointerHold = false
+    root.heldIndex = -1
+    root.heldAddress = ""
+    root.pressedAddress = ""
+    root.deferredRefresh = false
+    root.hoverIgnoreUntil = 0
+    root.hiding = false
+    root.scrollerInteractive = false
     root.filterText = ""
     root.selectedAddress = ""
     root.selectedIndex = -1
@@ -97,6 +108,12 @@ Item {
     root.errorText = ""
     root.phase = "loading"
     root.reveal = 0.96
+    Qt.callLater(function() {
+      if (!root.opened)
+        return
+      scroller.contentX = 0
+      scroller.contentY = 0
+    })
     try { Hyprland.refreshToplevels() } catch (e) {}
     root.refresh()
     root.reclaimFocus()
@@ -134,6 +151,7 @@ Item {
     root.pressedAddress = ""
     root.deferredRefresh = false
     root.hoverIgnoreUntil = 0
+    root.scrollerInteractive = false
     focusDebounce.stop()
     backdropTimer.stop()
     reconcileTimer.stop()
@@ -340,11 +358,23 @@ Item {
       if (!needle || hay.indexOf(needle) !== -1)
         out.push(row)
     }
+    // Drop scrolling before the Repeater sees the new model. A press that
+    // lands during that rebuild belongs to the card, not the Flickable.
+    root.scrollerInteractive = false
     root.windows = out
     root.syncSelection(out)
     root.phase = "ready"
     root.errorText = ""
     root.thumbGeneration++
+    root.armScroller()
+  }
+
+  function armScroller() {
+    root.scrollerInteractive = false
+    Qt.callLater(function() {
+      if (root.opened && !root.hiding && root.phase === "ready")
+        root.scrollerInteractive = true
+    })
   }
 
   function indexOfAddress(rows, address) {
@@ -438,6 +468,8 @@ Item {
   }
 
   function ensureVisible(index) {
+    if (!root.opened || root.hiding)
+      return
     var row = Math.floor(index / root.columns)
     var y = row * (root.cardHeight + root.gap)
     var view = scroller.height
@@ -558,6 +590,7 @@ Item {
     }
     root.phase = "error"
     root.errorText = "Hyprland didn’t return a window list."
+    root.scrollerInteractive = false
     root.windows = []
   }
 
@@ -725,39 +758,49 @@ Item {
     Item {
       id: stage
       anchors.fill: parent
-      opacity: panel.contentRevealed ? root.reveal : 0
-      scale: panel.contentRevealed ? root.reveal : 0.97
 
-      ScreencopyView {
-        id: shot
-        z: -2
-        // A full-screen capture of the monitor forwards pointer hits into the
-        // real desktop. It is only a blur source, never an input target.
+      // Backdrop fade only. The scrim, the dismiss layer, and the cards are
+      // siblings of this item so a second summon can take presses while
+      // contentRevealed is still false and this layer is still opacity 0.
+      Item {
+        id: visualStage
+        anchors.fill: parent
         enabled: false
-        anchors.fill: parent
-        opacity: 0
-        visible: root.opened
-        layer.enabled: root.opened
-        captureSource: root.opened ? panel.screen : null
-        live: false
-        paintCursor: false
-      }
+        opacity: panel.contentRevealed ? root.reveal : 0
+        scale: panel.contentRevealed ? root.reveal : 0.97
 
-      MultiEffect {
-        z: -1
-        anchors.fill: parent
-        source: shot
-        autoPaddingEnabled: true
-        blurEnabled: shot.hasContent
-        blur: 0.35
-        blurMax: 32
-        visible: shot.hasContent
+        ScreencopyView {
+          id: shot
+          z: -2
+          // A full-screen capture of the monitor forwards pointer hits into the
+          // real desktop. It is only a blur source, never an input target.
+          enabled: false
+          anchors.fill: parent
+          opacity: 0
+          visible: root.opened
+          layer.enabled: root.opened
+          captureSource: root.opened ? panel.screen : null
+          live: false
+          paintCursor: false
+        }
+
+        MultiEffect {
+          z: -1
+          anchors.fill: parent
+          source: shot
+          autoPaddingEnabled: true
+          blurEnabled: shot.hasContent
+          blur: 0.35
+          blurMax: 32
+          visible: shot.hasContent
+        }
       }
 
       Rectangle {
         id: inputScrim
         z: 1
         anchors.fill: parent
+        opacity: 1
         color: root.scrim
       }
 
@@ -828,9 +871,11 @@ Item {
         anchors.bottomMargin: Style.space(8)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
-        // Don't let a short grid steal presses that belong to a card.
-        interactive: contentHeight > height + 1
-        pressDelay: 0
+        // Tall grids still scroll. Scrolling stays off through publish and one
+        // beat after, and a short pressDelay lets the card take the press
+        // before this view can treat it as a flick.
+        interactive: root.scrollerInteractive && contentHeight > height + 1
+        pressDelay: 64
         contentWidth: width
         contentHeight: Math.max(height, grid.height)
         z: 3
