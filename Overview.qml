@@ -49,6 +49,9 @@ Item {
   // Survives endPointerHold so a release-before-click still activates this card.
   property string pressedAddress: ""
   property bool deferredRefresh: false
+  property real hoverIgnoreUntil: 0
+  property int thumbGeneration: 0
+  property bool swallowEsc: false
   property var pendingClients: []
   property bool clientSnapshotRejected: false
 
@@ -130,6 +133,7 @@ Item {
     root.heldAddress = ""
     root.pressedAddress = ""
     root.deferredRefresh = false
+    root.hoverIgnoreUntil = 0
     focusDebounce.stop()
     backdropTimer.stop()
     reconcileTimer.stop()
@@ -144,6 +148,19 @@ Item {
       try { root.shell.hide(root.pluginId) } catch (e) {}
     }
     root.hiding = false
+  }
+
+  // Esc is accepted, then the grid hides. For a few hundred milliseconds the
+  // shortcut stays armed so that same Esc cannot fall through to the quake console.
+  function dismissFromEsc() {
+    if (!root.opened) {
+      if (root.swallowEsc)
+        return
+      return
+    }
+    root.swallowEsc = true
+    escGuard.restart()
+    root.dismiss()
   }
 
   function toggle() {
@@ -327,6 +344,7 @@ Item {
     root.syncSelection(out)
     root.phase = "ready"
     root.errorText = ""
+    root.thumbGeneration++
   }
 
   function indexOfAddress(rows, address) {
@@ -385,6 +403,7 @@ Item {
     root.heldIndex = index
     root.heldAddress = clean
     root.pressedAddress = clean
+    root.hoverIgnoreUntil = Date.now() + 150
     root.selectionPinned = true
     root.selectedIndex = index
     root.selectedAddress = clean
@@ -543,13 +562,14 @@ Item {
   }
 
   function handleKey(event) {
-    if (!root.opened)
-      return
     if (event.key === Qt.Key_Escape) {
       event.accepted = true
-      root.dismiss()
+      if (root.opened)
+        root.dismissFromEsc()
       return
     }
+    if (!root.opened)
+      return
     event.accepted = true
     if (event.key === Qt.Key_Left) {
       root.moveSelection(-1)
@@ -572,6 +592,13 @@ Item {
     } else {
       event.accepted = false
     }
+  }
+
+  Timer {
+    id: escGuard
+    interval: 350
+    repeat: false
+    onTriggered: root.swallowEsc = false
   }
 
   Timer {
@@ -674,13 +701,21 @@ Item {
   OverlayWindow {
     id: panel
     shown: root.surfaceShown
+    shownKeyboardFocus: WlrKeyboardFocus.Exclusive
     WlrLayershell.namespace: "tim-nitty-griddy"
 
     Shortcut {
       sequences: ["Esc"]
-      enabled: root.opened
-      context: Qt.WindowShortcut
-      onActivated: if (root.opened) root.dismiss()
+      enabled: root.opened || root.swallowEsc
+      context: Qt.ApplicationShortcut
+      onActivated: root.dismissFromEsc()
+    }
+
+    Shortcut {
+      sequence: StandardKey.Cancel
+      enabled: root.opened || root.swallowEsc
+      context: Qt.ApplicationShortcut
+      onActivated: root.dismissFromEsc()
     }
 
     Item {
@@ -716,8 +751,12 @@ Item {
       }
 
       MouseArea {
+        z: 0
         anchors.fill: parent
-        onClicked: root.dismiss()
+        onPressed: function(mouse) {
+          mouse.accepted = true
+          root.dismiss()
+        }
       }
 
       Item {
@@ -782,13 +821,6 @@ Item {
         contentHeight: Math.max(height, grid.height)
         z: 2
 
-        MouseArea {
-          z: -1
-          width: Math.max(scroller.width, grid.width)
-          height: Math.max(scroller.height, grid.height)
-          onPressed: root.dismiss()
-        }
-
         Grid {
           id: grid
           anchors.horizontalCenter: parent.horizontalCenter
@@ -825,11 +857,22 @@ Item {
                 ScreencopyView {
                   id: preview
                   anchors.fill: parent
+                  enabled: false
                   captureSource: root.opened ? (root.waylandByAddress[address] || null) : null
-                  live: root.opened && captureSource !== null
+                  live: false
                   paintCursor: false
                   constraintSize: Qt.size(Math.max(1, width), Math.max(1, height))
                   visible: hasContent
+                  onCaptureSourceChanged: if (captureSource) captureFrame()
+                  Component.onCompleted: if (captureSource) captureFrame()
+                }
+
+                Connections {
+                  target: root
+                  function onThumbGenerationChanged() {
+                    if (preview.captureSource)
+                      preview.captureFrame()
+                  }
                 }
 
                 Column {
@@ -918,7 +961,7 @@ Item {
                 anchors.top: parent.top
                 anchors.right: parent.right
                 anchors.margins: Style.space(10)
-                z: 3
+                z: 5
 
                 Text {
                   anchors.centerIn: parent
@@ -938,18 +981,11 @@ Item {
                   cursorShape: Qt.PointingHandCursor
                   onPressed: function(mouse) {
                     mouse.accepted = true
-                    root.beginPointer(index, address)
-                  }
-                  onClicked: {
-                    var cardAddress = root.pressedAddress || address
+                    var cardAddress = String(address || "")
+                    root.beginPointer(index, cardAddress)
                     root.closeAddress(cardAddress)
                     root.endPointerHold()
                   }
-                  onReleased: function(mouse) {
-                    if (!containsMouse)
-                      root.endPointerHold()
-                  }
-                  onCanceled: root.endPointerHold()
                 }
               }
 
@@ -959,9 +995,9 @@ Item {
                 hoverEnabled: true
                 preventStealing: true
                 cursorShape: Qt.PointingHandCursor
-                z: 1
+                z: 2
                 onEntered: {
-                  if (!row || root.pointerHold)
+                  if (!row || root.pointerHold || Date.now() < root.hoverIgnoreUntil)
                     return
                   root.selectionPinned = true
                   root.selectedIndex = index
@@ -972,19 +1008,12 @@ Item {
                   if (!row)
                     return
                   mouse.accepted = true
-                  // Pin this card before hover or refresh can move the highlight.
-                  root.beginPointer(index, address)
-                }
-                onReleased: function(mouse) {
-                  if (!containsMouse)
-                    root.endPointerHold()
-                }
-                onCanceled: root.endPointerHold()
-                onClicked: function(mouse) {
-                  var cardAddress = root.pressedAddress || address
+                  // Act on press. A warped release must not retarget this card.
+                  var cardAddress = String(address || "")
+                  root.beginPointer(index, cardAddress)
                   if (mouse.button === Qt.MiddleButton)
                     root.closeAddress(cardAddress)
-                  else
+                  else if (mouse.button === Qt.LeftButton)
                     root.activateAddress(cardAddress)
                   root.endPointerHold()
                 }
