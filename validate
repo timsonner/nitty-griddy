@@ -1,0 +1,149 @@
+#!/bin/bash
+# Local stand-in for `omarchy plugin validate .`, plus helper behavior.
+# On an Omarchy machine, also run: omarchy plugin validate .
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+fail() {
+  echo "validate: $*" >&2
+  exit 1
+}
+
+command -v jq >/dev/null || fail "jq is required"
+[[ -f manifest.json ]] || fail "missing manifest.json"
+jq -e . manifest.json >/dev/null || fail "manifest.json is not valid JSON"
+jq -e '.schemaVersion == 1' manifest.json >/dev/null || fail "schemaVersion must be the number 1"
+for field in id name version kinds entryPoints; do
+  jq -e --arg f "$field" 'has($f)' manifest.json >/dev/null || fail "missing $field"
+done
+
+id=$(jq -r '.id' manifest.json)
+[[ $id == "tim.nitty-griddy" ]] || fail "id is '$id', expected tim.nitty-griddy"
+[[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "invalid plugin id"
+[[ $id != omarchy.* ]] || fail "reserved id"
+
+jq -e '.name == "NittyGriddy"' manifest.json >/dev/null || fail "display name"
+jq -e '.kinds == ["overlay"]' manifest.json >/dev/null || fail "kinds must be [\"overlay\"]"
+jq -e '.keepLoaded == true' manifest.json >/dev/null || fail "keepLoaded must be true"
+jq -e '.entryPoints.overlay == "Overview.qml"' manifest.json >/dev/null || fail "overlay entry"
+[[ -f Overview.qml && ! -L Overview.qml ]] || fail "Overview.qml missing or a symlink"
+
+while IFS= read -r ep_json; do
+  [[ -n $ep_json ]] || continue
+  ep=$(jq -r '.' <<<"$ep_json")
+  [[ $ep != /* && $ep != *..* && -f $ep && ! -L $ep ]] || fail "unsafe entry point: $ep"
+done < <(jq -c '.entryPoints | to_entries[] | .value' manifest.json)
+
+# The shell refuses a plugin tree that contains a symlink.
+while IFS= read -r path; do
+  [[ -L $path ]] && fail "symlink not allowed: $path"
+done < <(find . -mindepth 1 \( -path './.git' -prune \) -o -print)
+
+for helper in helpers/focus-window helpers/close-window helpers/list-windows; do
+  [[ -f $helper && -x $helper ]] || fail "$helper must be an executable file"
+  bash -n "$helper"
+done
+bash -n validate
+
+qml=Overview.qml
+for token in \
+  'function open' 'function close' 'function dismiss' \
+  'tim.nitty-griddy:open' 'tim.nitty-griddy:close' \
+  'Key_Escape' 'MiddleButton' 'ShiftModifier' \
+  'focus-window' 'close-window' 'Text.PlainText' \
+  'shell.hide' 'ScreencopyView'
+do
+  grep -q -- "$token" "$qml" || fail "Overview.qml missing $token"
+done
+
+grep -q 'action = "unset"' gestures.snippet.lua || fail "gestures must unset before bind"
+grep -q 'direction = "up"' gestures.snippet.lua || fail "gesture up"
+grep -q 'direction = "down"' gestures.snippet.lua || fail "gesture down"
+grep -q 'tim.nitty-griddy:open' gestures.snippet.lua || fail "gesture open event"
+grep -q 'tim.nitty-griddy:close' gestures.snippet.lua || fail "gesture close event"
+# Comments may warn about the flag. An actual assignment must not.
+if grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -q 'omarchy_default_gestures'; then
+  fail "snippet must not set omarchy_default_gestures"
+fi
+# The unset calls are the first two gesture registrations.
+unset_lines=$(grep -n 'action = "unset"' gestures.snippet.lua | cut -d: -f1)
+first_unset=$(echo "$unset_lines" | head -1)
+second_unset=$(echo "$unset_lines" | sed -n '2p')
+open_line=$(grep -n 'tim.nitty-griddy:open' gestures.snippet.lua | head -1 | cut -d: -f1)
+close_line=$(grep -n 'tim.nitty-griddy:close' gestures.snippet.lua | head -1 | cut -d: -f1)
+[[ -n $first_unset && -n $second_unset && $first_unset -lt $open_line && $second_unset -lt $close_line ]] \
+  || fail "unset must come before open and close binds"
+grep -q 'shell summon' gestures.snippet.lua || fail "snippet should document summon fallback"
+grep -q 'shell hide' gestures.snippet.lua || fail "snippet should document hide fallback"
+grep -q 'shell toggle' bindings.snippet.lua || fail "keybind should toggle via shell IPC"
+grep -q 'omarchy plugin add' README.md || fail "README install"
+grep -q 'gestures.lua' README.md || fail "README gestures path"
+grep -q 'omarchy restart shell' README.md || fail "README shell restart"
+grep -q 'omarchy_default_gestures = false' README.md || fail "README must warn against disabling default gestures"
+grep -q 'shell summon tim.nitty-griddy' README.md || fail "README summon"
+grep -q 'shell hide tim.nitty-griddy' README.md || fail "README hide"
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir -p "$tmp/bin"
+cat >"$tmp/bin/hyprctl" <<'SH'
+#!/bin/bash
+printf '%s\n' "$*" >>"${HYPRCTL_LOG:?}"
+if [[ ${1:-} == "-j" && ${2:-} == "clients" ]]; then
+  python3 -c 'import json; print(json.dumps([
+    {"address":"0xabc","mapped":True,"class":"org.wezfurlong.kitty","initialClass":"kitty","title":"shell\none","workspace":{"id":1,"name":"1"}},
+    {"address":"0xdef","mapped":False,"class":"ghost","title":"hidden","workspace":{"id":2,"name":"2"}},
+    {"address":"0x123","mapped":True,"class":"firefox","title":"docs","workspace":{"id":3,"name":"web"}}
+  ]))'
+fi
+exit 0
+SH
+chmod +x "$tmp/bin/hyprctl"
+
+log=$tmp/focus.log
+HYPRCTL_LOG=$log NITTY_GRIDDY_FOCUS_DELAY=0 PATH="$tmp/bin:$PATH" ./helpers/focus-window 0xAbC
+grep -q "hl.dsp.focus" "$log" || fail "focus did not dispatch"
+grep -q "address:0xAbC" "$log" || fail "focus address was rewritten or dropped"
+if HYPRCTL_LOG=$tmp/bad.log NITTY_GRIDDY_FOCUS_DELAY=0 PATH="$tmp/bin:$PATH" ./helpers/focus-window '0xabc;touch /tmp/nitty-griddy-pwn' ; then
+  fail "focus accepted a non-address"
+fi
+[[ ! -e /tmp/nitty-griddy-pwn ]] || fail "focus executed injected shell"
+rm -f /tmp/nitty-griddy-pwn
+
+log=$tmp/close.log
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/close-window 0xabc
+grep -q 'hl.dsp.window.close' "$log" || fail "close did not dispatch"
+grep -q 'address:0xabc' "$log" || fail "close address missing"
+if HYPRCTL_LOG=$tmp/bad-close.log PATH="$tmp/bin:$PATH" ./helpers/close-window '$(reboot)' ; then
+  fail "close accepted a non-address"
+fi
+
+log=$tmp/list.log
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/list-windows >"$tmp/list.out"
+[[ $(wc -l <"$tmp/list.out") -eq 2 ]] || fail "list-windows should emit two mapped clients"
+grep -q '"address":"0xabc"' "$tmp/list.out" || fail "list missing kitty"
+grep -q 'shell one' "$tmp/list.out" || fail "newline in a title was not flattened"
+grep -q '"address":"0x123"' "$tmp/list.out" || fail "list missing firefox"
+if grep -q 'ghost' "$tmp/list.out"; then
+  fail "unmapped client leaked"
+fi
+# Each record is one JSON line. A raw newline inside a title would split it.
+python3 - "$tmp/list.out" <<'PY' || fail "list-windows output was not clean NDJSON"
+import json, sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+if len(lines) != 2:
+    raise SystemExit(f"expected 2 json lines, got {len(lines)}")
+for line in lines:
+    row = json.loads(line)
+    for value in row.values():
+        if isinstance(value, str) and ("\n" in value or "\r" in value):
+            raise SystemExit("newline survived inside a field")
+PY
+
+# A non-numeric focus delay must not be passed to sleep.
+log=$tmp/delay.log
+HYPRCTL_LOG=$log NITTY_GRIDDY_FOCUS_DELAY='1;touch /tmp/nitty-griddy-delay' PATH="$tmp/bin:$PATH" ./helpers/focus-window 0x1
+[[ ! -e /tmp/nitty-griddy-delay ]] || fail "focus delay was evaluated"
+rm -f /tmp/nitty-griddy-delay
+
+echo "validate: all checks passed"

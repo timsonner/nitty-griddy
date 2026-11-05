@@ -1,0 +1,25 @@
+#!/bin/bash
+# Focus a Hyprland window by address, after the overlay has a moment to unmap.
+# Address must already be a compositor id. No shell metacharacters are accepted.
+set -euo pipefail
+
+address="${1:-}"
+address="${address#address:}"
+if [[ $address != 0x* ]]; then
+  address="0x${address}"
+fi
+
+if [[ ! $address =~ ^0x[0-9a-fA-F]{1,32}$ ]]; then
+  echo "nitty-griddy: refusing to focus an address that is not a window id" >&2
+  exit 2
+fi
+
+delay="${NITTY_GRIDDY_FOCUS_DELAY:-0.18}"
+if [[ ! $delay =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  delay=0.18
+fi
+sleep "$delay"
+
+if ! hyprctl eval "hl.dispatch(hl.dsp.focus({ window = 'address:$address' }))" >/dev/null 2>&1; then
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null
+fi

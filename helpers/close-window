@@ -1,0 +1,19 @@
+#!/bin/bash
+# Ask Hyprland to close one window. Graceful close only — this does not signal
+# the process, and it does not close the shell.
+set -euo pipefail
+
+address="${1:-}"
+address="${address#address:}"
+if [[ $address != 0x* ]]; then
+  address="0x${address}"
+fi
+
+if [[ ! $address =~ ^0x[0-9a-fA-F]{1,32}$ ]]; then
+  echo "nitty-griddy: refusing to close an address that is not a window id" >&2
+  exit 2
+fi
+
+if ! hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" >/dev/null 2>&1; then
+  hyprctl eval "hl.dispatch(hl.dsp.window.close({ window = 'address:$address' }))" >/dev/null
+fi

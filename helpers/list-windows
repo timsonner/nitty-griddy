@@ -1,0 +1,33 @@
+#!/bin/bash
+# Print mapped Hyprland clients as NDJSON, with hard bounds.
+# One JSON object per line: address, class, initialClass, title, workspace, workspaceId.
+set -euo pipefail
+
+# Keep a hostile or huge client list from growing inside the shell.
+# 256 MiB is enough for jq and still bounded.
+ulimit -v 262144 || true
+
+clients() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --signal=TERM --kill-after=1 2 hyprctl -j clients
+  else
+    hyprctl -j clients
+  fi
+}
+
+clients | jq -c '
+  def clip($n):
+    if type == "string" then (gsub("[\r\n]"; " ") | .[0:$n]) else "" end;
+  limit(256;
+    .[]
+    | select(.mapped != false)
+    | {
+        address: (.address | clip(34)),
+        class: (.class | clip(256)),
+        initialClass: (.initialClass | clip(256)),
+        title: (.title | clip(512)),
+        workspace: (.workspace.name | clip(128)),
+        workspaceId: (if (.workspace.id | type) == "number" then .workspace.id else 0 end)
+      }
+  )
+'
