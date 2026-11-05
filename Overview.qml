@@ -42,6 +42,13 @@ Item {
   property string selectedAddress: ""
   property int selectedIndex: -1
   property bool selectionPinned: false
+  // Pressed card, copied at press time so a hover or a refresh cannot retarget the click.
+  property bool pointerHold: false
+  property int heldIndex: -1
+  property string heldAddress: ""
+  // Survives endPointerHold so a release-before-click still activates this card.
+  property string pressedAddress: ""
+  property bool deferredRefresh: false
   property var pendingClients: []
   property bool clientSnapshotRejected: false
 
@@ -89,11 +96,21 @@ Item {
     root.reveal = 0.96
     try { Hyprland.refreshToplevels() } catch (e) {}
     root.refresh()
-    focusTimer.tries = 0
-    focusTimer.start()
+    root.reclaimFocus()
     backdropTimer.tries = 0
     backdropTimer.start()
     root.playReveal()
+  }
+
+  // Screencopy and the shell can take active focus after open, and Esc then
+  // falls through to the quake console. keyCatcher is zero-size and is not
+  // stacked over the cards, so this reclaim never blocks the pointer. Keep it
+  // for the whole time the grid is open — do not shrink it back to a short burst.
+  function reclaimFocus() {
+    if (!root.opened || root.hiding)
+      return
+    focusDebounce.tries = 0
+    focusDebounce.restart()
   }
 
   function playReveal() {
@@ -108,7 +125,12 @@ Item {
     root.opened = false
     root.surfaceShown = false
     root.reveal = 0.96
-    focusTimer.stop()
+    root.pointerHold = false
+    root.heldIndex = -1
+    root.heldAddress = ""
+    root.pressedAddress = ""
+    root.deferredRefresh = false
+    focusDebounce.stop()
     backdropTimer.stop()
     reconcileTimer.stop()
   }
@@ -282,6 +304,12 @@ Item {
 
   function publish(rows) {
     root.allWindows = rows
+    if (root.pointerHold) {
+      // A press is in flight. Rebuilding the grid now would retarget the click.
+      root.deferredRefresh = true
+      root.syncSelection(root.windows)
+      return
+    }
     root.applyFilter()
   }
 
@@ -301,33 +329,76 @@ Item {
     root.errorText = ""
   }
 
+  function indexOfAddress(rows, address) {
+    var i
+    for (i = 0; i < rows.length; i++) {
+      if (rows[i].address === address)
+        return i
+    }
+    return -1
+  }
+
   function syncSelection(rows) {
     var found = -1
     var i
-    if (root.selectedAddress) {
-      for (i = 0; i < rows.length; i++) {
-        if (rows[i].address === root.selectedAddress) {
-          found = i
-          break
-        }
+    if (root.pointerHold && root.heldAddress) {
+      found = root.indexOfAddress(rows, root.heldAddress)
+      if (found >= 0) {
+        root.selectedIndex = found
+        root.selectedAddress = root.heldAddress
       }
+      return
     }
+    if (root.selectedAddress)
+      found = root.indexOfAddress(rows, root.selectedAddress)
     if (found < 0) {
-      found = rows.length ? 0 : -1
       if (!root.selectionPinned) {
+        found = rows.length ? 0 : -1
         for (i = 0; i < rows.length; i++) {
           if (rows[i].activated) {
             found = i
             break
           }
         }
+      } else if (rows.length) {
+        found = root.selectedIndex
+        if (found < 0)
+          found = 0
+        if (found >= rows.length)
+          found = rows.length - 1
+      } else {
+        found = -1
       }
     }
     root.selectedIndex = found
     root.selectedAddress = found >= 0 ? rows[found].address : ""
     root.selectionPinned = true
-    if (found >= 0)
+    if (found >= 0 && !root.pointerHold)
       Qt.callLater(function() { root.ensureVisible(found) })
+  }
+
+  function beginPointer(index, address) {
+    var clean = root.hexAddress(address)
+    if (!clean)
+      return
+    root.pointerHold = true
+    root.heldIndex = index
+    root.heldAddress = clean
+    root.pressedAddress = clean
+    root.selectionPinned = true
+    root.selectedIndex = index
+    root.selectedAddress = clean
+    root.reclaimFocus()
+  }
+
+  function endPointerHold() {
+    var apply = root.deferredRefresh && root.opened && !root.hiding
+    root.pointerHold = false
+    root.heldIndex = -1
+    root.heldAddress = ""
+    root.deferredRefresh = false
+    if (apply)
+      root.applyFilter()
   }
 
   function moveSelection(delta) {
@@ -362,34 +433,47 @@ Item {
     root.selectionPinned = true
     root.selectedAddress = ""
     root.applyFilter()
+    root.reclaimFocus()
+  }
+
+  function activateAddress(address) {
+    var clean = root.hexAddress(address)
+    if (!clean)
+      return
+    Quickshell.execDetached([root.helper("focus-window"), clean])
+    root.dismiss()
   }
 
   function activateIndex(index) {
     if (index < 0 || index >= root.windows.length)
       return
-    var address = root.hexAddress(root.windows[index].address)
-    if (!address)
+    root.activateAddress(root.windows[index].address)
+  }
+
+  function closeAddress(address) {
+    var clean = root.hexAddress(address)
+    if (!clean)
       return
-    Quickshell.execDetached([root.helper("focus-window"), address])
-    root.dismiss()
+    Quickshell.execDetached([root.helper("close-window"), clean])
+    var kept = []
+    var i
+    for (i = 0; i < root.allWindows.length; i++) {
+      if (root.allWindows[i].address !== clean)
+        kept.push(root.allWindows[i])
+    }
+    root.allWindows = kept
+    if (root.pointerHold)
+      root.deferredRefresh = true
+    else
+      root.applyFilter()
+    // Stay open. Reconcile once the compositor has had a chance to drop it.
+    reconcileTimer.restart()
   }
 
   function closeIndex(index) {
     if (index < 0 || index >= root.windows.length)
       return
-    var address = root.hexAddress(root.windows[index].address)
-    if (!address)
-      return
-    Quickshell.execDetached([root.helper("close-window"), address])
-    var kept = []
-    var i
-    for (i = 0; i < root.allWindows.length; i++) {
-      if (root.allWindows[i].address !== address)
-        kept.push(root.allWindows[i])
-    }
-    root.publish(kept)
-    // Stay open. Reconcile once the compositor has had a chance to drop it.
-    reconcileTimer.restart()
+    root.closeAddress(root.windows[index].address)
   }
 
   function handleCustom(token) {
@@ -459,9 +543,15 @@ Item {
   }
 
   function handleKey(event) {
+    if (!root.opened)
+      return
     if (event.key === Qt.Key_Escape) {
+      event.accepted = true
       root.dismiss()
-    } else if (event.key === Qt.Key_Left) {
+      return
+    }
+    event.accepted = true
+    if (event.key === Qt.Key_Left) {
       root.moveSelection(-1)
     } else if (event.key === Qt.Key_Right) {
       root.moveSelection(1)
@@ -480,23 +570,24 @@ Item {
                && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))) {
       root.setFilter(root.filterText + event.text)
     } else {
-      return
+      event.accepted = false
     }
-    event.accepted = true
   }
 
   Timer {
-    id: focusTimer
+    id: focusDebounce
     interval: 40
     repeat: true
     property int tries: 0
     onTriggered: {
-      if (!root.opened || tries > 10) {
+      if (!root.opened || root.hiding || keyCatcher.activeFocus) {
         stop()
         return
       }
       keyCatcher.forceActiveFocus()
       tries++
+      if (tries > 20)
+        stop()
     }
   }
 
@@ -525,8 +616,10 @@ Item {
   Connections {
     target: panel
     function onContentRevealedChanged() {
-      if (panel.contentRevealed && root.opened)
+      if (panel.contentRevealed && root.opened) {
         root.playReveal()
+        root.reclaimFocus()
+      }
     }
   }
 
@@ -582,6 +675,13 @@ Item {
     id: panel
     shown: root.surfaceShown
     WlrLayershell.namespace: "tim-nitty-griddy"
+
+    Shortcut {
+      sequences: ["Esc"]
+      enabled: root.opened
+      context: Qt.WindowShortcut
+      onActivated: if (root.opened) root.dismiss()
+    }
 
     Item {
       id: stage
@@ -676,6 +776,8 @@ Item {
         anchors.bottomMargin: Style.space(8)
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        // Don't let a short grid steal presses that belong to a card.
+        interactive: contentHeight > height + 1
         contentWidth: width
         contentHeight: Math.max(height, grid.height)
         z: 2
@@ -705,6 +807,7 @@ Item {
               width: root.cardWidth
               height: root.cardHeight
               radius: root.radius
+              clip: true
               color: root.background
               border.width: selected ? Math.max(2, Style.space(2)) : 1
               border.color: selected ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.18)
@@ -833,7 +936,20 @@ Item {
                   hoverEnabled: true
                   preventStealing: true
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.closeIndex(index)
+                  onPressed: function(mouse) {
+                    mouse.accepted = true
+                    root.beginPointer(index, address)
+                  }
+                  onClicked: {
+                    var cardAddress = root.pressedAddress || address
+                    root.closeAddress(cardAddress)
+                    root.endPointerHold()
+                  }
+                  onReleased: function(mouse) {
+                    if (!containsMouse)
+                      root.endPointerHold()
+                  }
+                  onCanceled: root.endPointerHold()
                 }
               }
 
@@ -845,22 +961,32 @@ Item {
                 cursorShape: Qt.PointingHandCursor
                 z: 1
                 onEntered: {
-                  if (!row)
+                  if (!row || root.pointerHold)
                     return
                   root.selectionPinned = true
                   root.selectedIndex = index
                   root.selectedAddress = address
+                  root.reclaimFocus()
                 }
-                onClicked: function(mouse) {
+                onPressed: function(mouse) {
                   if (!row)
                     return
-                  root.selectionPinned = true
-                  root.selectedIndex = index
-                  root.selectedAddress = address
+                  mouse.accepted = true
+                  // Pin this card before hover or refresh can move the highlight.
+                  root.beginPointer(index, address)
+                }
+                onReleased: function(mouse) {
+                  if (!containsMouse)
+                    root.endPointerHold()
+                }
+                onCanceled: root.endPointerHold()
+                onClicked: function(mouse) {
+                  var cardAddress = root.pressedAddress || address
                   if (mouse.button === Qt.MiddleButton)
-                    root.closeIndex(index)
+                    root.closeAddress(cardAddress)
                   else
-                    root.activateIndex(index)
+                    root.activateAddress(cardAddress)
+                  root.endPointerHold()
                 }
               }
             }
@@ -900,16 +1026,22 @@ Item {
         opacity: 0.66
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
-        text: "Click or Enter focuses · ×, middle-click, or Shift+Q closes · Esc dismisses"
+        text: "Click or Enter focuses · type to filter · × / middle-click / Shift+Q closes · Esc dismisses"
         z: 2
       }
 
+      // Zero-size on purpose. A full-bleed catcher above the grid was taking
+      // pointer hits, so clicks missed the card under the cursor.
       Item {
         id: keyCatcher
-        anchors.fill: parent
+        width: 0
+        height: 0
         focus: root.opened
-        z: 4
         Keys.onPressed: function(event) { root.handleKey(event) }
+        onActiveFocusChanged: {
+          if (root.opened && !root.hiding && !activeFocus)
+            root.reclaimFocus()
+        }
       }
     }
   }

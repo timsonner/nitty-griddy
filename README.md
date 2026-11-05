@@ -88,7 +88,9 @@ omarchy restart shell
 | Click a card, or Enter | Focus that window and dismiss the grid |
 | × on the card, middle-click, or Shift+Q | Close that window. The grid stays if others remain |
 | Arrow keys | Move the selection |
-| Typing | Filter by title, app, or workspace. Backspace edits |
+| Type to filter | Narrow by title, app, or workspace. Backspace edits |
+
+The hint along the bottom reads: Click or Enter focuses · type to filter · × / middle-click / Shift+Q closes · Esc dismisses. Typing a letter filters. It does not close a window.
 
 The grid is on the focused screen. Thumbnails are live while the grid is open. Until a frame arrives, the card shows the app and the title. Window titles are plain text.
 
