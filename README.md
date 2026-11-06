@@ -90,11 +90,12 @@ omarchy restart shell
 | Three-finger swipe left while the grid is open | Previous page, back toward All |
 | Three-finger swipe down, Esc, or a click on the empty backdrop | Grid dismisses and focus returns to that window if it is still open. A quake console that was showing comes back. Down is a no-op when it is already closed |
 | Click a card, or Enter | Focus that window and dismiss the grid. The previously focused window is not restored. The pointer stays where it is |
-| × on the card, middle-click, or Shift+Q | Close that window. The grid stays if others remain |
+| Super+W on a selected card | Close that window, the same chord as the desktop. The grid stays if others remain. Hover a card or move to it with the arrow keys first. With nothing selected, Super+W does not close the window behind the grid |
+| × on the card | Close that window. The grid stays if others remain |
 | Arrow keys | Move the selection |
 | Type to filter | Narrow by title, app, or workspace. Backspace edits |
 
-The hint along the bottom reads: Type to filter · Arrow keys to move · Enter to focus · Esc to dismiss · Swipe for workspace. Typing a letter filters. It does not close a window. The workspace strip under the title shows All, then each workspace. The current page is the accent color.
+The hint along the bottom reads: Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Swipe for workspace. Typing a letter filters. It does not close a window. The workspace strip under the title shows All, then each workspace. The current page is the accent color.
 
 The grid is on the focused screen. Thumbnails are live while the grid is open. Until a frame arrives, the card shows the app and the title. Window titles are plain text.
 

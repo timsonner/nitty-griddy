@@ -49,7 +49,7 @@ qml=Overview.qml
 for token in \
   'function open' 'function close' 'function dismiss' \
   'timsonner.nitty-griddy:open' 'timsonner.nitty-griddy:close' \
-  'Key_Escape' 'MiddleButton' 'ShiftModifier' \
+  'Key_Escape' 'close-selected' 'closeSelected' \
   'focus-window' 'close-window' 'blur-focus' 'priorAddress' 'Text.PlainText' \
   'shell.hide' 'ScreencopyView'
 do
@@ -78,6 +78,8 @@ fi
 grep -q 'shell summon' gestures.snippet.lua || fail "snippet should document summon fallback"
 grep -q 'shell hide' gestures.snippet.lua || fail "snippet should document hide fallback"
 grep -q 'shell toggle' bindings.snippet.lua || fail "keybind should toggle via shell IPC"
+grep -q 'SUPER + W' bindings.snippet.lua || fail "Super+W close bind"
+grep -q 'timsonner.nitty-griddy:close-selected' bindings.snippet.lua || fail "close-selected event"
 grep -q 'omarchy plugin add' README.md || fail "README install"
 grep -q 'gestures.lua' README.md || fail "README gestures path"
 grep -q 'omarchy restart shell' README.md || fail "README shell restart"

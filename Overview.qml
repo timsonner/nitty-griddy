@@ -1105,6 +1105,14 @@ Item {
     root.closeAddress(root.windows[index].address)
   }
 
+  // Super+W while the grid is open. No card is selected until hover or the
+  // arrow keys, and this does not close the window behind the grid.
+  function closeSelected() {
+    if (!root.opened || root.hiding)
+      return
+    root.closeIndex(root.selectedIndex)
+  }
+
   function handleCustom(token) {
     if (token === "timsonner.nitty-griddy:open")
       root.open("{}")
@@ -1116,6 +1124,8 @@ Item {
       root.stepWorkspace(-1)
     else if (token === "timsonner.nitty-griddy:workspace-next")
       root.stepWorkspace(1)
+    else if (token === "timsonner.nitty-griddy:close-selected")
+      root.closeSelected()
   }
 
   function startList() {
@@ -1196,8 +1206,6 @@ Item {
       root.moveSelection(root.columns)
     } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
       root.activateIndex(root.selectedIndex)
-    } else if ((event.modifiers & Qt.ShiftModifier) && event.key === Qt.Key_Q) {
-      root.closeIndex(root.selectedIndex)
     } else if (event.key === Qt.Key_Backspace) {
       if (root.filterText.length)
         root.setFilter(root.filterText.slice(0, root.filterText.length - 1))
@@ -1722,7 +1730,7 @@ Item {
 
               MouseArea {
                 anchors.fill: parent
-                acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                acceptedButtons: Qt.LeftButton
                 hoverEnabled: true
                 preventStealing: true
                 cursorShape: Qt.PointingHandCursor
@@ -1742,10 +1750,7 @@ Item {
                   // Act on press. A warped release must not retarget this card.
                   var cardAddress = String(address || "")
                   root.beginPointer(index, cardAddress)
-                  if (mouse.button === Qt.MiddleButton)
-                    root.closeAddress(cardAddress)
-                  else if (mouse.button === Qt.LeftButton)
-                    root.activateAddress(cardAddress)
+                  root.activateAddress(cardAddress)
                   root.endPointerHold()
                 }
               }
@@ -1790,7 +1795,7 @@ Item {
         opacity: 0.66
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
-        text: "Type to filter · Arrow keys to move · Enter to focus · Esc to dismiss · Swipe for workspace"
+        text: "Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Swipe for workspace"
         z: 3
       }
 
