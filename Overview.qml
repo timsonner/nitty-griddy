@@ -42,8 +42,18 @@ Item {
   property string selectedAddress: ""
   property int selectedIndex: -1
   property bool selectionPinned: false
-  // Window that was focused before this open. Restored on an empty dismiss.
+  // Normal-workspace window that was focused before this open. Restored on an
+  // empty dismiss. A special: client is not stashed here.
   property string priorAddress: ""
+  // Bumps on every arm and disarm so a slow arm cannot turn no_warps back on.
+  property int warpGen: 0
+  // Bumps on every special-workspace arm and settle. The helper file is what
+  // dismiss restores; these mirror its stdout for this open.
+  property int specialGen: 0
+  property bool priorWasSpecial: false
+  property bool specialsSettled: false
+  property var specialAddresses: []
+  property var hiddenSpecials: []
   property bool opening: false
   property bool restoreOnBlur: false
   property bool blurAgain: false
@@ -102,14 +112,29 @@ Item {
     if (root.opening)
       return
     // Stash and blur before the overlay is interactive. An exclusive layer
-    // cannot clear the focused client once it is mapped.
+    // cannot clear the focused client once it is mapped. no_focus does not
+    // drop that client, and a client on special:qconsole keeps the seat until
+    // that workspace is hidden. Arm no_warps, blur every mapped special
+    // client, and toggle shown specials off before the layer is interactive.
     root.opening = true
     root.restoreOnBlur = false
-    root.priorAddress = root.focusedAddress()
+    root.specialsSettled = false
+    root.priorWasSpecial = false
+    root.specialAddresses = []
+    root.hiddenSpecials = []
+    var focused = root.focusedClientInfo()
+    if (root.specialSuffix(focused.workspace)) {
+      root.priorAddress = ""
+      root.priorWasSpecial = true
+    } else {
+      root.priorAddress = focused.address
+    }
+    root.armNoWarps()
     root.launchBlur()
   }
 
   function presentGrid() {
+    root.armNoWarps()
     root.opening = false
     blurWait.stop()
     root.opened = true
@@ -159,10 +184,12 @@ Item {
     root.blurToken = root.blurToken + 1
     blurCapture.token = root.blurToken
     blurWait.restart()
+    root.specialGen = root.specialGen + 1
+    var gen = String(root.specialGen)
     if (root.priorAddress)
-      blurCapture.command = [root.helper("blur-focus"), root.priorAddress]
+      blurCapture.command = [root.helper("blur-focus"), "--grid-open", "--gen", gen, root.priorAddress]
     else
-      blurCapture.command = [root.helper("blur-focus")]
+      blurCapture.command = [root.helper("blur-focus"), "--grid-open", "--gen", gen]
     blurCapture.running = true
   }
 
@@ -170,6 +197,174 @@ Item {
     if (!root.opening || root.hiding)
       return
     root.presentGrid()
+  }
+
+  function toplevelWorkspaceName(item) {
+    if (!item)
+      return ""
+    var ws = ""
+    try {
+      ws = root.workspaceName(item.workspace)
+    } catch (e) {
+      ws = ""
+    }
+    if (ws)
+      return ws
+    var ipc = null
+    try { ipc = item.lastIpcObject || null } catch (e2) { ipc = null }
+    if (ipc && ipc.workspace)
+      return String(ipc.workspace.name || "")
+    return ""
+  }
+
+  // The client Hyprland still considers focused, plus its workspace name.
+  // blur-focus reads `hyprctl activewindow -j` when the address is empty.
+  function focusedClientInfo() {
+    var info = { address: "", workspace: "" }
+    var i
+    try {
+      if (Hyprland.activeToplevel) {
+        info.address = root.hexAddress(Hyprland.activeToplevel.address)
+        info.workspace = root.toplevelWorkspaceName(Hyprland.activeToplevel)
+      }
+    } catch (e) {
+      info.address = ""
+      info.workspace = ""
+    }
+    if (info.address)
+      return info
+    var hypr = []
+    try {
+      if (Hyprland.toplevels && Hyprland.toplevels.values)
+        hypr = Hyprland.toplevels.values
+    } catch (e2) {
+      hypr = []
+    }
+    for (i = 0; i < hypr.length; i++) {
+      var item = hypr[i]
+      if (!item || !item.activated)
+        continue
+      info.address = root.hexAddress(item.address)
+      if (!info.address)
+        continue
+      info.workspace = root.toplevelWorkspaceName(item)
+      return info
+    }
+    var tops = []
+    try {
+      if (ToplevelManager.toplevels && ToplevelManager.toplevels.values)
+        tops = ToplevelManager.toplevels.values
+    } catch (e3) {
+      tops = []
+    }
+    for (i = 0; i < tops.length; i++) {
+      var top = tops[i]
+      if (!top)
+        continue
+      var attached = top.HyprlandToplevel || null
+      var activated = !!top.activated
+      if (attached && attached.activated !== undefined)
+        activated = !!attached.activated
+      if (!activated)
+        continue
+      info.address = root.hexAddress(attached ? attached.address : "")
+      if (!info.address)
+        continue
+      info.workspace = root.toplevelWorkspaceName(attached)
+      if (!info.workspace)
+        info.workspace = root.toplevelWorkspaceName(top)
+      return info
+    }
+    return info
+  }
+
+  function specialSuffix(workspace) {
+    var name = String(workspace || "")
+    if (name.indexOf("special:") !== 0)
+      return ""
+    var suffix = name.slice("special:".length)
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(suffix))
+      return ""
+    return suffix
+  }
+
+  function specialSuffixForAddress(address) {
+    var i
+    var rows = root.windows || []
+    for (i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i].address === address)
+        return root.specialSuffix(rows[i].workspace)
+    }
+    rows = root.allWindows || []
+    for (i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i].address === address)
+        return root.specialSuffix(rows[i].workspace)
+    }
+    return ""
+  }
+
+  function rememberSpecial(addr) {
+    var next = root.specialAddresses.slice()
+    var i
+    for (i = 0; i < next.length; i++) {
+      if (next[i] === addr)
+        return
+    }
+    next.push(addr)
+    root.specialAddresses = next
+  }
+
+  function rememberHidden(name) {
+    var next = root.hiddenSpecials.slice()
+    var i
+    for (i = 0; i < next.length; i++) {
+      if (next[i] === name)
+        return
+    }
+    next.push(name)
+    root.hiddenSpecials = next
+  }
+
+  // Restore or drop the specials this open hid. The helper unsets no_focus
+  // on the clients it blurred so a quake window is not left unable to focus.
+  function settleSpecials(action, extra) {
+    if (root.specialsSettled)
+      return
+    root.specialsSettled = true
+    root.specialGen = root.specialGen + 1
+    var gen = String(root.specialGen)
+    if (action === "dismiss") {
+      Quickshell.execDetached([
+        root.helper("blur-focus"),
+        "--grid-dismiss",
+        "--gen",
+        gen
+      ])
+      return
+    }
+    if (action === "activate") {
+      var clean = root.hexAddress(extra)
+      if (!clean)
+        return
+      var suffix = root.specialSuffixForAddress(clean)
+      if (suffix)
+        Quickshell.execDetached([
+          root.helper("blur-focus"),
+          "--grid-activate",
+          "--gen",
+          gen,
+          clean,
+          suffix
+        ])
+      else
+        Quickshell.execDetached([
+          root.helper("blur-focus"),
+          "--grid-activate",
+          "--gen",
+          gen,
+          clean
+        ])
+    }
   }
 
   // The client Hyprland still considers focused. Prefer the in-process
@@ -258,7 +453,35 @@ Item {
   }
 
   function noteBlurAddress(line) {
-    var addr = root.hexAddress(line)
+    var text = String(line || "").replace(/\r/g, "").trim()
+    if (text === "prior-special") {
+      if (blurCapture.token !== root.blurToken)
+        return
+      root.priorWasSpecial = true
+      root.priorAddress = ""
+      root.restoreOnBlur = false
+      return
+    }
+    if (text.indexOf("special ") === 0) {
+      var specialAddr = root.hexAddress(text.slice("special ".length))
+      if (!specialAddr)
+        return
+      if (blurCapture.token !== root.blurToken) {
+        Quickshell.execDetached([root.helper("blur-focus"), "--release", specialAddr])
+        return
+      }
+      root.rememberSpecial(specialAddr)
+      return
+    }
+    if (text.indexOf("hidden ") === 0) {
+      if (blurCapture.token !== root.blurToken)
+        return
+      var hiddenName = text.slice("hidden ".length).trim()
+      if (/^[A-Za-z0-9_-]{1,64}$/.test(hiddenName))
+        root.rememberHidden(hiddenName)
+      return
+    }
+    var addr = root.hexAddress(text)
     if (!addr)
       return
     if (blurCapture.token !== root.blurToken) {
@@ -266,6 +489,8 @@ Item {
         Quickshell.execDetached([root.helper("blur-focus"), "--release", addr])
       return
     }
+    if (root.priorWasSpecial)
+      return
     if (root.opening || (root.opened && !root.priorAddress)) {
       root.priorAddress = addr
       return
@@ -307,10 +532,13 @@ Item {
   }
 
   function close() {
+    var wasActive = root.opened || root.opening
     var prior = ""
     if (!root.hiding && (root.opened || root.opening))
       prior = root.priorAddress
-    if (!root.hiding && root.opening && !prior)
+    if (root.priorWasSpecial)
+      prior = ""
+    if (!root.hiding && root.opening && !prior && !root.priorWasSpecial)
       root.restoreOnBlur = true
     root.priorAddress = ""
     root.blurAgain = false
@@ -329,6 +557,14 @@ Item {
     focusDebounce.stop()
     backdropTimer.stop()
     reconcileTimer.stop()
+    // Shell hide does not go through dismiss. Disarm here when dismiss has
+    // not already done it (dismiss sets hiding first). Put a hidden quake
+    // console back on that path too.
+    if (wasActive && !root.hiding) {
+      root.disarmNoWarps()
+      if (!root.specialsSettled)
+        root.settleSpecials("dismiss", "")
+    }
     if (!root.hiding)
       root.scheduleRestore(prior)
   }
@@ -338,9 +574,15 @@ Item {
       return
     if (!root.opened && !root.opening)
       return
+    root.disarmNoWarps()
+    if (!root.specialsSettled)
+      root.settleSpecials("dismiss", "")
     var prior = root.priorAddress
-    // A blur that has not reported its address yet should still restore.
-    root.restoreOnBlur = root.opening && !prior
+    if (root.priorWasSpecial)
+      prior = ""
+    // A blur that has not reported its address yet should still restore,
+    // unless that client was the quake console.
+    root.restoreOnBlur = root.opening && !prior && !root.priorWasSpecial
     root.priorAddress = ""
     root.hiding = true
     root.close()
@@ -381,6 +623,29 @@ Item {
 
   function helper(name) {
     return root.pluginDir + "/helpers/" + name
+  }
+
+  // cursor:no_warps for the whole time the grid is up. The helper logs
+  // arm/disarm to stderr. --gen makes a dismiss beat an arm that is still
+  // in flight, so the option cannot stay on after the grid is gone.
+  function armNoWarps() {
+    root.warpGen = root.warpGen + 1
+    Quickshell.execDetached([
+      root.helper("blur-focus"),
+      "--arm-no-warps",
+      "--gen",
+      String(root.warpGen)
+    ])
+  }
+
+  function disarmNoWarps() {
+    root.warpGen = root.warpGen + 1
+    Quickshell.execDetached([
+      root.helper("blur-focus"),
+      "--disarm-no-warps",
+      "--gen",
+      String(root.warpGen)
+    ])
   }
 
   function hexAddress(raw) {
@@ -696,12 +961,21 @@ Item {
     if (!clean)
       return
     var prior = root.priorAddress
+    if (root.priorWasSpecial)
+      prior = ""
     root.priorAddress = ""
     root.restoreOnBlur = false
+    // Show the quake workspace again when the card is one of its windows.
+    // A normal card leaves the hidden specials hidden and clears their blur.
+    root.settleSpecials("activate", clean)
     if (prior && prior !== clean)
       Quickshell.execDetached([root.helper("focus-window"), clean, prior])
     else
       Quickshell.execDetached([root.helper("focus-window"), clean])
+    // Press already chose the window. Disarm before dismiss so no_warps
+    // cannot stay on. focus-window turns it on only for its own focus, then
+    // reconciles to this disarm.
+    root.disarmNoWarps()
     root.dismiss()
   }
 

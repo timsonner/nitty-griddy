@@ -56,23 +56,20 @@ do
   grep -q -- "$token" "$qml" || fail "Overview.qml missing $token"
 done
 
-grep -q 'action = "unset"' gestures.snippet.lua || fail "gestures must unset before bind"
 grep -q 'direction = "up"' gestures.snippet.lua || fail "gesture up"
 grep -q 'direction = "down"' gestures.snippet.lua || fail "gesture down"
 grep -q 'tim.nitty-griddy:open' gestures.snippet.lua || fail "gesture open event"
 grep -q 'tim.nitty-griddy:close' gestures.snippet.lua || fail "gesture close event"
+grep -q 'workspace = "r-1"' gestures.snippet.lua || fail "gesture previous workspace"
+grep -q 'workspace = "r+1"' gestures.snippet.lua || fail "gesture next workspace"
 # Comments may warn about the flag. An actual assignment must not.
 if grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -q 'omarchy_default_gestures'; then
   fail "snippet must not set omarchy_default_gestures"
 fi
-# The unset calls are the first two gesture registrations.
-unset_lines=$(grep -n 'action = "unset"' gestures.snippet.lua | cut -d: -f1)
-first_unset=$(echo "$unset_lines" | head -1)
-second_unset=$(echo "$unset_lines" | sed -n '2p')
-open_line=$(grep -n 'tim.nitty-griddy:open' gestures.snippet.lua | head -1 | cut -d: -f1)
-close_line=$(grep -n 'tim.nitty-griddy:close' gestures.snippet.lua | head -1 | cut -d: -f1)
-[[ -n $first_unset && -n $second_unset && $first_unset -lt $open_line && $second_unset -lt $close_line ]] \
-  || fail "unset must come before open and close binds"
+# Unset is a config error when up and down are not already registered.
+if grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -q 'action = "unset"'; then
+  fail "snippet must not register action = unset"
+fi
 grep -q 'shell summon' gestures.snippet.lua || fail "snippet should document summon fallback"
 grep -q 'shell hide' gestures.snippet.lua || fail "snippet should document hide fallback"
 grep -q 'shell toggle' bindings.snippet.lua || fail "keybind should toggle via shell IPC"
@@ -85,6 +82,9 @@ grep -q 'shell hide tim.nitty-griddy' README.md || fail "README hide"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+# The helper ignores a state path that does not end with its own file name.
+export NITTY_GRIDDY_WARP_STATE=$tmp/tim.nitty-griddy.no-warps
+export NITTY_GRIDDY_SPECIAL_STATE=$tmp/tim.nitty-griddy.specials
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/hyprctl" <<'SH'
 #!/bin/bash
@@ -218,6 +218,43 @@ if grep -q "release_input_capture" "$log"; then
 fi
 if HYPRCTL_LOG=$tmp/bad-release.log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --release '$(reboot)'; then
   fail "release accepted a non-address"
+fi
+
+# The magnet fix: arm cursor:no_warps while the grid is up, and disarm after.
+for token in 'armNoWarps' 'disarmNoWarps' '--grid-open' '--grid-dismiss' 'no_warps'; do
+  grep -q -- "$token" "$qml" || fail "Overview.qml missing $token"
+done
+log=$tmp/warp.log
+: >"$log"
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --arm-no-warps --gen 1 >"$tmp/arm.out" 2>"$tmp/arm.err"
+grep -q "no_warps = true" "$log" || fail "arm did not enable no_warps"
+grep -q "nitty-griddy: arm no_warps" "$tmp/arm.err" || fail "arm did not log"
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --disarm-no-warps --gen 2 >"$tmp/disarm.out" 2>"$tmp/disarm.err"
+grep -q "no_warps = false" "$log" || fail "disarm did not clear no_warps"
+grep -q "nitty-griddy: disarm no_warps" "$tmp/disarm.err" || fail "disarm did not log"
+if HYPRCTL_LOG=$tmp/bad-warp.log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --arm-no-warps --gen '1;reboot'; then
+  fail "arm accepted a non-numeric generation"
+fi
+
+# A plugin reload restarts the QML counter at 1. A disarmed state file from
+# earlier in this login must not make that arm a no-op.
+printf '90 off 0\n' >"$NITTY_GRIDDY_WARP_STATE"
+touch -d '10 seconds ago' "$NITTY_GRIDDY_WARP_STATE"
+log=$tmp/warp-reload.log
+: >"$log"
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --arm-no-warps --gen 1 >"$tmp/arm-reload.out" 2>"$tmp/arm-reload.err"
+grep -q "no_warps = true" "$log" || fail "reload arm was blocked by an old generation"
+if grep -q "arm no_warps stale" "$tmp/arm-reload.err"; then
+  fail "reload arm logged stale against an old disarmed generation"
+fi
+# A dismiss that landed during this open still beats an older in-flight arm.
+printf '6 off 0\n' >"$NITTY_GRIDDY_WARP_STATE"
+log=$tmp/warp-race.log
+: >"$log"
+HYPRCTL_LOG=$log PATH="$tmp/bin:$PATH" ./helpers/blur-focus --arm-no-warps --gen 5 >"$tmp/arm-race.out" 2>"$tmp/arm-race.err"
+grep -q "arm no_warps stale" "$tmp/arm-race.err" || fail "in-flight arm was not stale after a newer disarm"
+if grep -q "no_warps = true" "$log"; then
+  fail "stale arm turned no_warps back on"
 fi
 
 echo "validate: all checks passed"

@@ -6,6 +6,11 @@
 # stashed client can take the seat again and a different stashed client is
 # not left unable to focus. The picked window is also raised to the top of
 # its z-order, so it lands in front of any overlapping floating windows.
+#
+# The focus dispatch itself warps the pointer unless cursor.no_warps is on.
+# This turns it on for the focus, then asks blur-focus to reconcile. Reconcile
+# turns it off when the grid has disarmed, and leaves it on when a newer open
+# armed again, so a delayed focus cannot leave the option stuck.
 set -euo pipefail
 
 normalize() {
@@ -38,26 +43,32 @@ if [[ ! $delay =~ ^[0-9]+([.][0-9]+)?$ ]]; then
 fi
 sleep "$delay"
 
-clear_props() {
+clear_call() {
   local target=$1
-  local script="(function() hl.dispatch(hl.dsp.window.set_prop({ prop = 'no_focus', value = 'unset', window = 'address:${target}' })); hl.dispatch(hl.dsp.window.set_prop({ prop = 'focus_on_activate', value = 'unset', window = 'address:${target}' })); end)()"
-  if ! hyprctl eval "$script" >/dev/null 2>&1; then
-    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"no_focus\", value = \"unset\", window = \"address:${target}\" })" >/dev/null 2>&1 || true
-    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"focus_on_activate\", value = \"unset\", window = \"address:${target}\" })" >/dev/null 2>&1 || true
-  fi
+  printf " hl.dispatch(hl.dsp.window.set_prop({ prop = 'no_focus', value = 'unset', window = 'address:%s' })); hl.dispatch(hl.dsp.window.set_prop({ prop = 'focus_on_activate', value = 'unset', window = 'address:%s' }));" "$target" "$target"
 }
 
-clear_props "$address"
+# no_warps stays true through the focus dispatch. Reconcile applies the
+# grid's current intent afterwards (false once dismiss has disarmed).
+body=" hl.config({ cursor = { no_warps = true } });"
+body+=$(clear_call "$address")
 if [[ -n $release && $release != "$address" ]]; then
-  clear_props "$release"
+  body+=$(clear_call "$release")
+fi
+body+=" hl.dispatch(hl.dsp.focus({ window = 'address:${address}' }));"
+body+=" hl.dispatch(hl.dsp.window.alter_zorder({ mode = 'top', window = 'address:${address}' }));"
+
+script="(function()${body} end)()"
+if ! hyprctl eval "$script" >/dev/null 2>&1; then
+  hyprctl dispatch "hl.dsp.exec_cmd('hyprctl keyword cursor:no_warps true')" >/dev/null 2>&1 || true
+  hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"no_focus\", value = \"unset\", window = \"address:${address}\" })" >/dev/null 2>&1 || true
+  hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"focus_on_activate\", value = \"unset\", window = \"address:${address}\" })" >/dev/null 2>&1 || true
+  if [[ -n $release && $release != "$address" ]]; then
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"no_focus\", value = \"unset\", window = \"address:${release}\" })" >/dev/null 2>&1 || true
+    hyprctl dispatch "hl.dsp.window.set_prop({ prop = \"focus_on_activate\", value = \"unset\", window = \"address:${release}\" })" >/dev/null 2>&1 || true
+  fi
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null 2>&1 || true
+  hyprctl dispatch "hl.dsp.window.alter_zorder({ mode = \"top\", window = \"address:$address\" })" >/dev/null 2>&1 || true
 fi
 
-if ! hyprctl eval "hl.dispatch(hl.dsp.focus({ window = 'address:$address' }))" >/dev/null 2>&1; then
-  hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null
-fi
-
-# Raise the focused window above the rest of its floating stack. Harmless for
-# tiled windows, which do not participate in the floating z-order.
-if ! hyprctl eval "hl.dispatch(hl.dsp.window.alter_zorder({ mode = 'top', window = 'address:$address' }))" >/dev/null 2>&1; then
-  hyprctl dispatch "hl.dsp.window.alter_zorder({ mode = \"top\", window = \"address:$address\" })" >/dev/null
-fi
+"$(dirname "$0")/blur-focus" --reconcile-no-warps || true

@@ -84,8 +84,8 @@ omarchy restart shell
 | Action | Result |
 |---|---|
 | Three-finger swipe up, or `omarchy-shell shell summon tim.nitty-griddy '{}'` | Grid opens with windows from all workspaces. No card is selected. The window that was focused is remembered and deselected |
-| Three-finger swipe down, Esc, or a click on the empty backdrop | Grid dismisses and focus returns to that window if it is still open. Down is a no-op when it is already closed |
-| Click a card, or Enter | Focus that window and dismiss the grid. The previously focused window is not restored |
+| Three-finger swipe down, Esc, or a click on the empty backdrop | Grid dismisses and focus returns to that window if it is still open. A quake console that was showing comes back. Down is a no-op when it is already closed |
+| Click a card, or Enter | Focus that window and dismiss the grid. The previously focused window is not restored. The pointer stays where it is |
 | × on the card, middle-click, or Shift+Q | Close that window. The grid stays if others remain |
 | Arrow keys | Move the selection |
 | Type to filter | Narrow by title, app, or workspace. Backspace edits |
@@ -128,7 +128,7 @@ In a checkout of this repo, `./validate` checks the manifest and the helpers wit
 
 ## Troubleshooting
 
-**`hyprctl configerrors` mentions a duplicate gesture.** Up or down is bound twice. Keep a single unset, then a single bind, for each direction.
+**`hyprctl configerrors` mentions a gesture.** Up or down is bound twice, or an unset names a gesture nothing registered. Keep one bind for each direction.
 
 **Swipe does nothing after a shell restart.** The shell is not seeing the socket2 event. In the gesture functions, replace the `hl.dispatch(hl.dsp.event(...))` lines with summon and hide. Use `hl.dispatch(hl.dsp.exec_cmd(...))`. A bare `hl.dsp.exec_cmd()` only builds a dispatcher and does not run. `exec_cmd` goes through a shell, which is what the `'{}'` payload needs.
 
@@ -136,6 +136,10 @@ In a checkout of this repo, `./validate` checks the manifest and the helpers wit
 hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell summon tim.nitty-griddy '{}'"))
 hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell hide tim.nitty-griddy"))
 ```
+
+**Clicking a card does nothing, or the pointer sticks to one card.** The window that was focused stays selected under the grid, and Hyprland warps the pointer onto that window's real geometry. On this machine that window is often the quake console (`special:qconsole`). While the grid is open it sets `cursor:no_warps` and hides a visible special workspace. Dismissing restores both. Choosing another window leaves the console hidden.
+
+**Escape does nothing while an input method is running.** fcitx5 can sit on the overlay's keyboard grab and swallow the key. `bindings.snippet.lua` binds Escape in the compositor and consumes it only while the grid is open, so the grid still dismisses. Leave `omarchy-fcitx5.service` enabled unless letters typed into the filter are swallowed too. Caps Lock compose sequences need that service.
 
 **No thumbnails.** The cards still show the app name and the title. Check that Hyprland offers toplevel export and that nothing is blocking screen capture for Quickshell.
 

@@ -1,27 +1,995 @@
 #!/bin/bash
-# Stop the client that was focused before the grid from owning activation.
+# Stop the client that was focused before the grid from owning activation,
+# and keep the pointer from warping onto that client's real geometry.
 #
 # Hyprland has no unfocus dispatcher. hl.dsp.focus requires a window, and a
-# null window is a no-op. rawWindowFocus(nullptr) also returns without
-# clearing the focused client once an exclusive layer surface exists, so the
-# overlay's own keyboard grab cannot drop the window that was selected
-# before it mapped. That is the client that stays selected and fights presses.
+# null window is a no-op. Focusing a monitor focuses that monitor's candidate,
+# so it does not clear the seat either. rawWindowFocus(nullptr) returns
+# without clearing the focused client once an exclusive layer surface exists.
+# The overlay's keyboard grab therefore cannot drop the window that was
+# selected before it mapped. That client stays selected. Clicks then warp the
+# cursor onto its real geometry, which in the grid reads as a magnet on one
+# card. no_focus only ignores later focus attempts; it does not drop the seat.
 #
 # Least invasive equivalent that does not close, minimize, move, or change
 # workspace:
 #   1. hl.dsp.release_input_capture() drops a pointer or keyboard grab.
-#   2. no_focus=1 makes Hyprland ignore later focus attempts for this client
-#      ("Ignoring focus to nofocus window").
+#   2. no_focus=1 makes Hyprland ignore later focus attempts for this client.
 #   3. focus_on_activate=0 stops an xdg activate from pulling the seat back.
-# Both props are set_prop overrides. focus-window unsets them before it
+#   4. cursor.no_warps is armed for the open and disarmed on dismiss, so the
+#      compositor cannot warp the pointer onto the still-selected client.
+# Both window props are set_prop overrides. focus-window unsets them before it
 # focuses. --release unsets them when the window is closed instead of focused.
 # With no address argument, the focused client is read from `hyprctl activewindow -j`.
+#
+# Hyprland 0.57 removed the keyword IPC. Plain
+# `hyprctl keyword cursor:no_warps true` returns "unknown request".
+# The supported setter, used first, is:
+#   hyprctl eval '(function() hl.config({ cursor = { no_warps = true } }); end)()'
+# If eval fails, fall back to the in-compositor command that still applies
+# on 0.57.1:
+#   hl.dispatch(hl.dsp.exec_cmd('hyprctl keyword cursor:no_warps true'))
+# --disarm-no-warps sets the same option back to false so it cannot stay on.
+# The first arm of an open also moves the pointer to the focused monitor's
+# center, in logical pixels (mode size / scale), once. A --gen value lets a
+# later dismiss ignore an in-flight arm so a slow arm cannot turn it back on.
+#
+# A focused client on special:qconsole (or any special:*) keeps that seat
+# under the exclusive overlay. no_focus does not drop it, so card focus loses
+# until the special workspace is toggled off. --grid-open therefore blurs
+# every mapped special:* client and toggles off each special that is actually
+# showing. The names and addresses are recorded so the hide can be reversed.
+# A second open carries those names and toggles only when the workspace is
+# still showing, so it cannot toggle the console back on.
+# --grid-dismiss (empty dismiss, Esc, backdrop, shell hide) unsets those blur
+# props and toggles each recorded special back on only while it is still
+# hidden. --grid-activate ADDRESS [suffix] unsets the props too. A normal
+# window leaves the hidden specials hidden, because Tim chose another window.
+# A special window is shown again when that workspace is not already visible.
+# The suffix is used only when the client list has no workspace for ADDRESS.
+# A --gen older than the recorded epoch does nothing while a hidden or
+# blurred line is still armed, so a late open cannot hide the console in the
+# middle of a newer open. A leftover epoch with no armed lines does not
+# block, so a Quickshell restart can open the grid again. The lock is held
+# across the hyprctl calls so a dismiss cannot interleave a toggle.
 set -euo pipefail
 
-release=0
-if [[ ${1:-} == "--release" ]]; then
-  release=1
+init_warp_paths() {
+  local base=${NITTY_GRIDDY_WARP_STATE:-${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.no-warps}
+  case $base in
+    *[!A-Za-z0-9/_.-]*)
+      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.no-warps
+      ;;
+  esac
+  case $base in
+    *tim.nitty-griddy.no-warps) ;;
+    *)
+      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.no-warps
+      ;;
+  esac
+  WARP_STATE=$base
+  WARP_LOCK=$base.lock
+}
+
+hold_lock() {
+  mkdir -p -- "$(dirname -- "$WARP_LOCK")"
+  touch -- "$WARP_LOCK"
+  exec 9>>"$WARP_LOCK"
+  flock 9
+}
+
+unlock_state() {
+  flock -u 9 || true
+}
+
+# A generation only orders arms and disarms inside one open. The QML counter
+# restarts at 0 when the plugin reloads, while this file lives for the login.
+# A file that has sat disarmed is a finished session, not a newer command.
+state_is_current() {
+  local path=$1
+  [[ -f $path ]] || return 1
+  local now mtime
+  now=$(date +%s)
+  mtime=$(stat -c %Y -- "$path" 2>/dev/null || printf '%s' "$now")
+  [[ $((now - mtime)) -lt 2 ]]
+}
+
+# epoch mode centered   mode is on|off, centered is 1 after the pointer move.
+read_state_vars() {
+  epoch=0
+  mode=off
+  centered=0
+  if [[ -f $WARP_STATE ]]; then
+    local line=""
+    IFS= read -r line <"$WARP_STATE" || true
+    if [[ $line =~ ^([0-9]+)[[:space:]](on|off)[[:space:]]([01])$ ]]; then
+      epoch=$((10#${BASH_REMATCH[1]}))
+      mode=${BASH_REMATCH[2]}
+      centered=${BASH_REMATCH[3]}
+    fi
+  fi
+}
+
+apply_no_warps() {
+  local value=$1
+  local x=${2:-}
+  local y=${3:-}
+  local word=true
+  local move=""
+  if [[ $value != true ]]; then
+    value=false
+    word=false
+  fi
+  if [[ -n $x && -n $y ]]; then
+    move=" hl.dispatch(hl.dsp.cursor.move({ x = ${x}, y = ${y} }));"
+  fi
+  # hl.config is the 0.57 lua path. exec_cmd(keyword) is only the fallback.
+  local script="(function() hl.config({ cursor = { no_warps = ${value} } });${move} end)()"
+  if ! hyprctl eval "$script" >/dev/null 2>&1; then
+    hyprctl dispatch "hl.dsp.exec_cmd('hyprctl keyword cursor:no_warps ${word}')" >/dev/null 2>&1 || true
+    if [[ -n $move ]]; then
+      hyprctl dispatch "hl.dsp.cursor.move({ x = ${x}, y = ${y} })" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+# If a newer arm or disarm won while hyprctl was in flight, apply that.
+# A single corrective apply can itself finish after a newer transition and
+# leave the opposite no_warps value. Apply the recorded mode again until the
+# record still matches, and stop after a few passes so two helpers cannot
+# chase each other forever.
+reapply_winner() {
+  local expect_epoch=$1
+  local expect_mode=$2
+  local spins=0
+  while [[ $spins -lt 6 ]]; do
+    hold_lock
+    read_state_vars
+    if [[ $epoch -eq $expect_epoch && $mode == "$expect_mode" ]]; then
+      unlock_state
+      return 0
+    fi
+    expect_epoch=$epoch
+    expect_mode=$mode
+    unlock_state
+    if [[ $expect_mode == on ]]; then
+      apply_no_warps true
+    else
+      apply_no_warps false
+    fi
+    spins=$((spins + 1))
+  done
+}
+
+focused_center() {
+  local json
+  json=$(hyprctl monitors -j 2>/dev/null || true)
+  [[ -n $json ]] || return 0
+  jq -r '
+    def pick:
+      if type != "array" or length == 0 then empty
+      else
+        ((map(select((.focused == true) and (.disabled != true))) | .[0])
+          // (map(select(.disabled != true)) | .[0])
+          // .[0])
+      end;
+    (pick) as $m
+    | select($m != null)
+    | ($m.scale // 1 | tonumber) as $s0
+    | (if $s0 == 0 then 1 else $s0 end) as $s
+    | (($m.x // 0) + (($m.width // 0) / $s) / 2 | floor) as $cx
+    | (($m.y // 0) + (($m.height // 0) / $s) / 2 | floor) as $cy
+    | "\($cx) \($cy)"
+  ' <<<"$json" 2>/dev/null || true
+}
+
+arm_no_warps() {
+  local x=$1
+  local y=$2
+  init_warp_paths
+
+  # Reject a stale generation before any hyprctl, then again after the
+  # monitor query so a dismiss that landed in between is not overwritten.
+  hold_lock
+  read_state_vars
+  if [[ $has_gen -eq 1 && $gen_num -lt $epoch ]] && state_is_current "$WARP_STATE"; then
+    unlock_state
+    echo "nitty-griddy: arm no_warps stale" >&2
+    return 0
+  fi
+  unlock_state
+
+  if [[ -z $x || -z $y ]]; then
+    local center=""
+    center=$(focused_center || true)
+    if [[ $center =~ ^(-?[0-9]{1,6})[[:space:]](-?[0-9]{1,6})$ ]]; then
+      x=${BASH_REMATCH[1]}
+      y=${BASH_REMATCH[2]}
+    else
+      x=""
+      y=""
+    fi
+  fi
+
+  local next=0
+  local do_center=0
+  hold_lock
+  read_state_vars
+  if [[ $has_gen -eq 1 && $gen_num -lt $epoch ]] && state_is_current "$WARP_STATE"; then
+    unlock_state
+    echo "nitty-griddy: arm no_warps stale" >&2
+    return 0
+  fi
+  if [[ $has_gen -eq 1 ]]; then
+    next=$gen_num
+  else
+    next=$((epoch + 1))
+  fi
+  local new_centered=$centered
+  if [[ $centered -eq 0 && -n $x && -n $y ]]; then
+    do_center=1
+    new_centered=1
+  fi
+  printf '%s on %s\n' "$next" "$new_centered" >"$WARP_STATE"
+  unlock_state
+
+  if [[ $do_center -eq 1 ]]; then
+    echo "nitty-griddy: arm no_warps center ${x} ${y}" >&2
+    apply_no_warps true "$x" "$y"
+  else
+    echo "nitty-griddy: arm no_warps" >&2
+    apply_no_warps true
+  fi
+  reapply_winner "$next" on
+}
+
+disarm_no_warps() {
+  init_warp_paths
+  local next=0
+  hold_lock
+  read_state_vars
+  if [[ $has_gen -eq 1 && $gen_num -lt $epoch ]] && state_is_current "$WARP_STATE"; then
+    unlock_state
+    echo "nitty-griddy: disarm no_warps stale" >&2
+    return 0
+  fi
+  if [[ $has_gen -eq 1 ]]; then
+    next=$gen_num
+  else
+    next=$((epoch + 1))
+  fi
+  printf '%s off 0\n' "$next" >"$WARP_STATE"
+  unlock_state
+  echo "nitty-griddy: disarm no_warps" >&2
+  apply_no_warps false
+  reapply_winner "$next" off
+}
+
+reconcile_no_warps() {
+  init_warp_paths
+  hold_lock
+  read_state_vars
+  local seen_epoch=$epoch
+  local seen_mode=$mode
+  unlock_state
+  echo "nitty-griddy: reconcile no_warps ${seen_mode}" >&2
+  if [[ $seen_mode == on ]]; then
+    apply_no_warps true
+  else
+    apply_no_warps false
+  fi
+  reapply_winner "$seen_epoch" "$seen_mode"
+}
+
+init_special_paths() {
+  local base=${NITTY_GRIDDY_SPECIAL_STATE:-${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.specials}
+  case $base in
+    *[!A-Za-z0-9/_.-]*)
+      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.specials
+      ;;
+  esac
+  case $base in
+    *tim.nitty-griddy.specials) ;;
+    *)
+      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.specials
+      ;;
+  esac
+  SPECIAL_STATE=$base
+  SPECIAL_LOCK=$base.lock
+}
+
+hold_special_lock() {
+  mkdir -p -- "$(dirname -- "$SPECIAL_LOCK")"
+  touch -- "$SPECIAL_LOCK"
+  exec 8>>"$SPECIAL_LOCK"
+  flock 8
+}
+
+unlock_special() {
+  flock -u 8 || true
+}
+
+read_special_vars() {
+  special_epoch=0
+  hidden_names=()
+  blurred_addrs=()
+  [[ -f $SPECIAL_STATE ]] || return 0
+  local line="" first=1
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $first -eq 1 ]]; then
+      first=0
+      if [[ $line =~ ^([0-9]+)$ ]]; then
+        special_epoch=$((10#${BASH_REMATCH[1]}))
+      fi
+      continue
+    fi
+    if [[ $line =~ ^hidden[[:space:]]([A-Za-z0-9_-]{1,64})$ ]]; then
+      hidden_names+=("${BASH_REMATCH[1]}")
+    elif [[ $line =~ ^blurred[[:space:]](0x[0-9a-fA-F]{1,32})$ ]]; then
+      blurred_addrs+=("${BASH_REMATCH[1]}")
+    fi
+  done <"$SPECIAL_STATE"
+}
+
+write_special_state() {
+  local epoch_value=$1
+  local dir tmp name addr
+  dir=$(dirname -- "$SPECIAL_STATE")
+  mkdir -p -- "$dir"
+  tmp=$(mktemp "$dir/special.XXXXXX")
+  {
+    printf '%s\n' "$epoch_value"
+    if [[ ${#hidden_names[@]} -gt 0 ]]; then
+      for name in "${hidden_names[@]}"; do
+        printf 'hidden %s\n' "$name"
+      done
+    fi
+    if [[ ${#blurred_addrs[@]} -gt 0 ]]; then
+      for addr in "${blurred_addrs[@]}"; do
+        printf 'blurred %s\n' "$addr"
+      done
+    fi
+  } >"$tmp"
+  mv -f -- "$tmp" "$SPECIAL_STATE"
+}
+
+special_stale() {
+  [[ $has_gen -eq 1 && $gen_num -lt $special_epoch ]] || return 1
+  [[ ${#hidden_names[@]} -gt 0 || ${#blurred_addrs[@]} -gt 0 ]] || return 1
+  state_is_current "$SPECIAL_STATE"
+}
+
+next_special_epoch() {
+  if [[ $has_gen -eq 1 ]]; then
+    printf '%s' "$gen_num"
+  else
+    printf '%s' "$((special_epoch + 1))"
+  fi
+}
+
+normalize_address() {
+  local value=${1:-}
+  value=${value#address:}
+  [[ -n $value ]] || return 1
+  if [[ $value != 0x* && $value != 0X* ]]; then
+    value=0x${value}
+  fi
+  if [[ ! $value =~ ^0x[0-9a-fA-F]{1,32}$ ]]; then
+    return 1
+  fi
+  printf '%s' "$value"
+}
+
+contains_name() {
+  local needle=$1 item
   shift
+  [[ $# -gt 0 ]] || return 1
+  for item in "$@"; do
+    [[ $item == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+contains_addr() {
+  local needle=${1,,} item
+  shift
+  [[ $# -gt 0 ]] || return 1
+  for item in "$@"; do
+    [[ ${item,,} == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+add_found_hide() {
+  local name=$1
+  [[ $name =~ ^[A-Za-z0-9_-]{1,64}$ ]] || return 0
+  if [[ ${#found_hide[@]} -gt 0 ]] && contains_name "$name" "${found_hide[@]}"; then
+    return 0
+  fi
+  if [[ ${#found_hide[@]} -ge 8 ]]; then
+    echo "nitty-griddy: ignoring extra special workspace" >&2
+    return 0
+  fi
+  found_hide+=("$name")
+}
+
+add_found_blur() {
+  local addr=$1
+  [[ $addr =~ ^0x[0-9a-fA-F]{1,32}$ ]] || return 0
+  if [[ ${#found_blur[@]} -gt 0 ]] && contains_addr "$addr" "${found_blur[@]}"; then
+    return 0
+  fi
+  if [[ ${#found_blur[@]} -ge 32 ]]; then
+    echo "nitty-griddy: ignoring extra special client" >&2
+    return 0
+  fi
+  found_blur+=("$addr")
+}
+
+special_suffix_of() {
+  local ws=${1:-}
+  case $ws in
+    special:*)
+      printf '%s' "${ws#special:}"
+      ;;
+  esac
+}
+
+visible_special_suffixes() {
+  local json=${1:-}
+  [[ -n $json ]] || return 0
+  jq -r '
+    def nm($w):
+      if ($w | type) == "object" and ($w.name | type) == "string" then $w.name else "" end;
+    if type == "array" then .[]? else empty end
+    | nm(.specialWorkspace), nm(.activeWorkspace)
+    | select(startswith("special:"))
+    | .[8:]
+    | select(test("^[A-Za-z0-9_-]{1,64}$"))
+  ' <<<"$json" 2>/dev/null || true
+}
+
+load_visible() {
+  local json=$1 name
+  visible_now=()
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    visible_now+=("$name")
+  done < <(visible_special_suffixes "$json")
+}
+
+monitors_json() {
+  hyprctl monitors -j 2>/dev/null || true
+}
+
+clients_json() {
+  hyprctl -j clients 2>/dev/null || true
+}
+
+client_rows() {
+  local clients=${1:-}
+  [[ -n $clients ]] || return 0
+  jq -r '
+    def ws:
+      if (.workspace | type) == "object" and (.workspace.name | type) == "string" then .workspace.name else "" end;
+    if type == "array" then .[]? else empty end
+    | [(.address // "" | tostring), ws]
+    | @tsv
+  ' <<<"$clients" 2>/dev/null || true
+}
+
+lookup_workspace() {
+  local want=${1,,}
+  local clients=${2:-}
+  local active=${3:-}
+  local a="" w="" norm="" raw="" aws=""
+  if [[ -n $clients ]]; then
+    while IFS=$'\t' read -r a w; do
+      norm=$(normalize_address "$a" || true)
+      if [[ -n $norm && ${norm,,} == "$want" ]]; then
+        printf '%s' "$w"
+        return 0
+      fi
+    done < <(client_rows "$clients")
+  fi
+  if [[ -n $active ]]; then
+    raw=$(jq -r 'if type == "object" then (.address // "") else "" end' <<<"$active" 2>/dev/null || true)
+    aws=$(jq -r 'if type == "object" and (.workspace | type) == "object" and (.workspace.name | type) == "string" then .workspace.name else "" end' <<<"$active" 2>/dev/null || true)
+    norm=$(normalize_address "$raw" || true)
+    if [[ -n $norm && ${norm,,} == "$want" ]]; then
+      printf '%s' "$aws"
+    fi
+  fi
+}
+
+collect_mapped_specials() {
+  local clients=${1:-}
+  [[ -n $clients ]] || return 0
+  jq -r '
+    def ws:
+      if (.workspace | type) == "object" and (.workspace.name | type) == "string" then .workspace.name else "" end;
+    if type == "array" then .[]? else empty end
+    | select(.mapped != false)
+    | select(.hidden != true)
+    | select(ws | startswith("special:"))
+    | [(.address // "" | tostring), ws]
+    | @tsv
+  ' <<<"$clients" 2>/dev/null || true
+}
+
+run_dispatches() {
+  local script=$1
+  shift
+  [[ -n $script ]] || return 0
+  if hyprctl eval "$script" >/dev/null 2>&1; then
+    return 0
+  fi
+  local call
+  if [[ $# -gt 0 ]]; then
+    for call in "$@"; do
+      hyprctl dispatch "$call" >/dev/null 2>&1 || true
+    done
+  fi
+}
+
+append_window_props() {
+  local address=$1
+  local no_focus=$2
+  local activate=$3
+  [[ $address =~ ^0x[0-9a-fA-F]{1,32}$ ]] || return 0
+  [[ $no_focus == 1 || $no_focus == unset ]] || return 0
+  [[ $activate == 0 || $activate == unset ]] || return 0
+  GRID_SCRIPT+=" hl.dispatch(hl.dsp.window.set_prop({ prop = 'no_focus', value = '${no_focus}', window = 'address:${address}' }));"
+  GRID_SCRIPT+=" hl.dispatch(hl.dsp.window.set_prop({ prop = 'focus_on_activate', value = '${activate}', window = 'address:${address}' }));"
+  GRID_FALLS+=("hl.dsp.window.set_prop({ prop = \"no_focus\", value = \"${no_focus}\", window = \"address:${address}\" })")
+  GRID_FALLS+=("hl.dsp.window.set_prop({ prop = \"focus_on_activate\", value = \"${activate}\", window = \"address:${address}\" })")
+}
+
+append_toggle() {
+  local name=$1
+  [[ $name =~ ^[A-Za-z0-9_-]{1,64}$ ]] || return 0
+  GRID_SCRIPT+=" hl.dispatch(hl.dsp.workspace.toggle_special('${name}'));"
+  GRID_FALLS+=("hl.dsp.workspace.toggle_special('${name}')")
+}
+
+flush_dispatches() {
+  local capture=$1
+  [[ -n $GRID_SCRIPT ]] || return 0
+  local script="(function()"
+  local -a falls=()
+  if [[ $capture -eq 1 ]]; then
+    script+=" hl.dispatch(hl.dsp.release_input_capture());"
+    falls+=("hl.dsp.release_input_capture()")
+  fi
+  script+="${GRID_SCRIPT} end)()"
+  if [[ ${#GRID_FALLS[@]} -gt 0 ]]; then
+    falls+=("${GRID_FALLS[@]}")
+  fi
+  if [[ ${#falls[@]} -gt 0 ]]; then
+    run_dispatches "$script" "${falls[@]}"
+  else
+    run_dispatches "$script"
+  fi
+  GRID_SCRIPT=""
+  GRID_FALLS=()
+}
+
+reset_grid_script() {
+  GRID_SCRIPT=""
+  GRID_FALLS=()
+}
+
+# Copy the recorded names before read_special_vars is called again.
+copy_hidden() {
+  copied_hidden=()
+  if [[ ${#hidden_names[@]} -gt 0 ]]; then
+    copied_hidden=("${hidden_names[@]}")
+  fi
+}
+
+copy_blurred() {
+  copied_blurred=()
+  if [[ ${#blurred_addrs[@]} -gt 0 ]]; then
+    copied_blurred=("${blurred_addrs[@]}")
+  fi
+}
+
+grid_open() {
+  local supplied=${1:-}
+  init_special_paths
+  hold_special_lock
+  read_special_vars
+  if special_stale; then
+    unlock_special
+    echo "nitty-griddy: grid-open stale" >&2
+    return 0
+  fi
+
+  local candidate=$supplied
+  local active="" raw=""
+  if [[ -z $candidate ]]; then
+    active=$(hyprctl activewindow -j 2>/dev/null || true)
+    if [[ -n $active ]]; then
+      raw=$(jq -r 'if type == "object" then (.address // "") else "" end' <<<"$active" 2>/dev/null || true)
+      candidate=$(normalize_address "$raw" || true)
+    fi
+  fi
+
+  local clients mon
+  clients=$(clients_json)
+  mon=$(monitors_json)
+
+  found_hide=()
+  found_blur=()
+  local prior_is_special=0
+  local prior_print=""
+  local ws="" suf="" focused_suffix=""
+  if [[ -n $candidate ]]; then
+    ws=$(lookup_workspace "$candidate" "$clients" "$active" || true)
+    case $ws in
+      special:*)
+        prior_is_special=1
+        add_found_blur "$candidate"
+        suf=$(special_suffix_of "$ws")
+        if [[ $suf =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+          focused_suffix=$suf
+          add_found_hide "$focused_suffix"
+        fi
+        ;;
+      *)
+        prior_print=$candidate
+        ;;
+    esac
+  fi
+
+  local addr wname norm
+  while IFS=$'\t' read -r addr wname; do
+    [[ -n $addr ]] || continue
+    norm=$(normalize_address "$addr" || true)
+    [[ -n $norm ]] || continue
+    add_found_blur "$norm"
+  done < <(collect_mapped_specials "$clients")
+
+  load_visible "$mon"
+  local shown
+  if [[ ${#visible_now[@]} -gt 0 ]]; then
+    for shown in "${visible_now[@]}"; do
+      add_found_hide "$shown"
+    done
+  fi
+
+  copy_hidden
+  if [[ ${#copied_hidden[@]} -gt 0 ]]; then
+    for shown in "${copied_hidden[@]}"; do
+      add_found_hide "$shown"
+    done
+  fi
+  copy_blurred
+
+  local -a toggled=() extra_release=()
+  local name olda toggle_off=0
+  if [[ ${#found_hide[@]} -gt 0 ]]; then
+    for name in "${found_hide[@]}"; do
+      toggle_off=0
+      if [[ ${#visible_now[@]} -gt 0 ]] && contains_name "$name" "${visible_now[@]}"; then
+        toggle_off=1
+      elif [[ -n $focused_suffix && $name == "$focused_suffix" ]]; then
+        if [[ ${#copied_hidden[@]} -eq 0 ]] || ! contains_name "$name" "${copied_hidden[@]}"; then
+          toggle_off=1
+        fi
+      fi
+      if [[ $toggle_off -eq 1 ]]; then
+        toggled+=("$name")
+      fi
+    done
+  fi
+  if [[ ${#copied_blurred[@]} -gt 0 ]]; then
+    for olda in "${copied_blurred[@]}"; do
+      if [[ ${#found_blur[@]} -eq 0 ]] || ! contains_addr "$olda" "${found_blur[@]}"; then
+        extra_release+=("$olda")
+      fi
+    done
+  fi
+
+  local next
+  next=$(next_special_epoch)
+  hidden_names=()
+  blurred_addrs=()
+  if [[ ${#found_hide[@]} -gt 0 ]]; then
+    hidden_names=("${found_hide[@]}")
+  fi
+  if [[ ${#found_blur[@]} -gt 0 ]]; then
+    blurred_addrs=("${found_blur[@]}")
+  fi
+  write_special_state "$next"
+
+  reset_grid_script
+  local capture=0
+  if [[ -n $prior_print || ${#found_blur[@]} -gt 0 || ${#toggled[@]} -gt 0 ]]; then
+    capture=1
+  fi
+  if [[ ${#extra_release[@]} -gt 0 ]]; then
+    for olda in "${extra_release[@]}"; do
+      append_window_props "$olda" unset unset
+    done
+  fi
+  if [[ -n $prior_print ]]; then
+    append_window_props "$prior_print" 1 0
+  fi
+  if [[ ${#found_blur[@]} -gt 0 ]]; then
+    for olda in "${found_blur[@]}"; do
+      append_window_props "$olda" 1 0
+    done
+  fi
+  if [[ ${#toggled[@]} -gt 0 ]]; then
+    for name in "${toggled[@]}"; do
+      append_toggle "$name"
+      echo "nitty-griddy: hide special ${name}" >&2
+    done
+  fi
+  flush_dispatches "$capture"
+  echo "nitty-griddy: grid-open" >&2
+  unlock_special
+
+  if [[ $prior_is_special -eq 1 ]]; then
+    printf 'prior-special\n'
+  fi
+  if [[ -n $prior_print ]]; then
+    printf '%s\n' "$prior_print"
+  fi
+  if [[ ${#found_blur[@]} -gt 0 ]]; then
+    for olda in "${found_blur[@]}"; do
+      printf 'special %s\n' "$olda"
+    done
+  fi
+  if [[ ${#found_hide[@]} -gt 0 ]]; then
+    for name in "${found_hide[@]}"; do
+      printf 'hidden %s\n' "$name"
+    done
+  fi
+}
+
+grid_dismiss() {
+  init_special_paths
+  hold_special_lock
+  read_special_vars
+  if special_stale; then
+    unlock_special
+    echo "nitty-griddy: grid-dismiss stale" >&2
+    return 0
+  fi
+  copy_hidden
+  copy_blurred
+  local mon
+  mon=$(monitors_json)
+  load_visible "$mon"
+
+  local next name
+  next=$(next_special_epoch)
+  hidden_names=()
+  blurred_addrs=()
+  write_special_state "$next"
+
+  reset_grid_script
+  local addr
+  if [[ ${#copied_blurred[@]} -gt 0 ]]; then
+    for addr in "${copied_blurred[@]}"; do
+      append_window_props "$addr" unset unset
+      echo "nitty-griddy: release special ${addr}" >&2
+    done
+  fi
+  if [[ ${#copied_hidden[@]} -gt 0 ]]; then
+    for name in "${copied_hidden[@]}"; do
+      if [[ ${#visible_now[@]} -eq 0 ]] || ! contains_name "$name" "${visible_now[@]}"; then
+        append_toggle "$name"
+        echo "nitty-griddy: restore special ${name}" >&2
+      fi
+    done
+  fi
+  flush_dispatches 0
+  echo "nitty-griddy: grid-dismiss" >&2
+  unlock_special
+}
+
+grid_activate() {
+  local address=$1
+  local fallback=${2:-}
+  init_special_paths
+  hold_special_lock
+  read_special_vars
+  if special_stale; then
+    unlock_special
+    echo "nitty-griddy: grid-activate stale" >&2
+    return 0
+  fi
+  copy_blurred
+
+  local clients mon ws="" suf=""
+  clients=$(clients_json)
+  mon=$(monitors_json)
+  ws=$(lookup_workspace "$address" "$clients" "" || true)
+  case $ws in
+    special:*)
+      suf=$(special_suffix_of "$ws")
+      ;;
+    "")
+      if [[ $fallback =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+        suf=$fallback
+      fi
+      ;;
+  esac
+  if [[ ! $suf =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+    suf=""
+  fi
+  load_visible "$mon"
+
+  local -a releasing=()
+  if [[ ${#copied_blurred[@]} -gt 0 ]]; then
+    releasing=("${copied_blurred[@]}")
+  fi
+  if [[ -n $suf ]]; then
+    if [[ ${#releasing[@]} -eq 0 ]] || ! contains_addr "$address" "${releasing[@]}"; then
+      releasing+=("$address")
+    fi
+  fi
+
+  local show_it=0
+  if [[ -n $suf ]]; then
+    if [[ ${#visible_now[@]} -eq 0 ]] || ! contains_name "$suf" "${visible_now[@]}"; then
+      show_it=1
+    fi
+  fi
+
+  local next
+  next=$(next_special_epoch)
+  hidden_names=()
+  blurred_addrs=()
+  write_special_state "$next"
+
+  reset_grid_script
+  local addr
+  if [[ ${#releasing[@]} -gt 0 ]]; then
+    for addr in "${releasing[@]}"; do
+      append_window_props "$addr" unset unset
+      echo "nitty-griddy: release special ${addr}" >&2
+    done
+  fi
+  if [[ $show_it -eq 1 ]]; then
+    append_toggle "$suf"
+    echo "nitty-griddy: show special ${suf}" >&2
+  else
+    echo "nitty-griddy: drop specials" >&2
+  fi
+  flush_dispatches 0
+  echo "nitty-griddy: grid-activate" >&2
+  unlock_special
+}
+
+mode=""
+gen=""
+has_gen=0
+gen_num=0
+coord_x=""
+coord_y=""
+
+if [[ $# -ge 1 ]]; then
+  case $1 in
+    --release)
+      mode=release
+      shift
+      ;;
+    --arm-no-warps)
+      mode=arm
+      shift
+      ;;
+    --disarm-no-warps)
+      mode=disarm
+      shift
+      ;;
+    --reconcile-no-warps)
+      mode=reconcile
+      shift
+      ;;
+    --grid-open)
+      mode=grid-open
+      shift
+      ;;
+    --grid-dismiss)
+      mode=grid-dismiss
+      shift
+      ;;
+    --grid-activate)
+      mode=grid-activate
+      shift
+      ;;
+  esac
+fi
+
+if [[ $mode == arm || $mode == disarm || $mode == reconcile || $mode == grid-open || $mode == grid-dismiss || $mode == grid-activate ]]; then
+  if [[ ${1:-} == "--gen" ]]; then
+    if [[ $# -lt 2 || ! $2 =~ ^[0-9]{1,10}$ ]]; then
+      echo "nitty-griddy: refusing a warp generation that is not a number" >&2
+      exit 2
+    fi
+    gen=$2
+    has_gen=1
+    gen_num=$((10#$gen))
+    shift 2
+  fi
+fi
+
+if [[ $mode == grid-dismiss ]]; then
+  if [[ $# -ne 0 ]]; then
+    echo "nitty-griddy: refusing extra special arguments" >&2
+    exit 2
+  fi
+  grid_dismiss
+  exit 0
+fi
+
+if [[ $mode == grid-open ]]; then
+  open_address=""
+  if [[ $# -gt 1 ]]; then
+    echo "nitty-griddy: refusing to blur an address that is not a window id" >&2
+    exit 2
+  fi
+  if [[ $# -eq 1 ]]; then
+    if ! open_address=$(normalize_address "$1"); then
+      echo "nitty-griddy: refusing to blur an address that is not a window id" >&2
+      exit 2
+    fi
+  fi
+  grid_open "$open_address"
+  exit 0
+fi
+
+if [[ $mode == grid-activate ]]; then
+  if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo "nitty-griddy: refusing to blur an address that is not a window id" >&2
+    exit 2
+  fi
+  if ! act_address=$(normalize_address "$1"); then
+    echo "nitty-griddy: refusing to blur an address that is not a window id" >&2
+    exit 2
+  fi
+  act_suffix=""
+  if [[ $# -eq 2 ]]; then
+    act_suffix=$2
+    if [[ ! $act_suffix =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+      echo "nitty-griddy: refusing a special workspace name" >&2
+      exit 2
+    fi
+  fi
+  grid_activate "$act_address" "$act_suffix"
+  exit 0
+fi
+
+if [[ $mode == arm && $# -gt 0 ]]; then
+  if [[ $# -ne 2 || ! $1 =~ ^-?[0-9]{1,6}$ || ! $2 =~ ^-?[0-9]{1,6}$ ]]; then
+    echo "nitty-griddy: refusing to arm no_warps with a bad cursor position" >&2
+    exit 2
+  fi
+  coord_x=$1
+  coord_y=$2
+  shift 2
+fi
+
+if [[ $mode == arm || $mode == disarm || $mode == reconcile ]]; then
+  if [[ $# -ne 0 ]]; then
+    echo "nitty-griddy: refusing extra warp arguments" >&2
+    exit 2
+  fi
+  case $mode in
+    arm) arm_no_warps "$coord_x" "$coord_y" ;;
+    disarm) disarm_no_warps ;;
+    reconcile) reconcile_no_warps ;;
+  esac
+  exit 0
+fi
+
+release=0
+if [[ $mode == release ]]; then
+  release=1
 fi
 
 if [[ $# -gt 1 ]]; then
