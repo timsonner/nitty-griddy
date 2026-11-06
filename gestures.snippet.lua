@@ -8,11 +8,13 @@
 --
 -- The require has to run after Omarchy's defaults.
 --
--- Stock Omarchy does not register three-finger up or down, so there is
+-- Stock Omarchy does not register three-finger gestures, so there is
 -- nothing to unset. action = "unset" on a missing gesture is a config error
--- ("Can't remove a non-existent gesture") on lines that used to do that.
--- Do not set omarchy_default_gestures = false — that also removes three-finger
--- left/right workspace swipes when those defaults exist.
+-- ("Can't remove a non-existent gesture").
+-- This file binds all four directions. If a later Omarchy writes
+-- omarchy_default_gestures = false because it saw hl.gesture here, leave
+-- that line. Deleting it lets Omarchy's defaults register first, and
+-- Hyprland keeps those instead of these.
 --
 -- Up opens. Down dismisses. Down does nothing when the overview is already
 -- closed: it does not bring back the quake console or the Omarchy menu.
