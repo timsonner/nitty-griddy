@@ -6,20 +6,18 @@
 --
 --   require("hypr.gestures")
 --
--- The require has to run after Omarchy's defaults. An earlier require unsets
--- gestures that have not been registered yet, and the defaults then win.
+-- The require has to run after Omarchy's defaults.
 --
--- Only three-finger up and down are replaced. Do not set
--- omarchy_default_gestures = false — that also removes three-finger
--- left/right workspace swipes.
+-- Stock Omarchy does not register three-finger up or down, so there is
+-- nothing to unset. action = "unset" on a missing gesture is a config error
+-- ("Can't remove a non-existent gesture") on lines that used to do that.
+-- Do not set omarchy_default_gestures = false — that also removes three-finger
+-- left/right workspace swipes when those defaults exist.
 --
 -- Up opens. Down dismisses. Down does nothing when the overview is already
 -- closed: it does not bring back the quake console or the Omarchy menu.
 -- Hyprland will not accept a second gesture on the same fingers and direction,
 -- so this file should be the only up/down pair in the user config.
-
-hl.gesture({ fingers = 3, direction = "up", action = "unset" })
-hl.gesture({ fingers = 3, direction = "down", action = "unset" })
 
 hl.gesture({
   fingers = 3,
@@ -37,6 +35,25 @@ hl.gesture({
   action = function()
     -- Explicit dismiss. A no-op when the overview is already closed.
     hl.dispatch(hl.dsp.event("tim.nitty-griddy:close"))
+  end,
+})
+
+-- Previous and next workspace, empty ones included. The switch lands when
+-- the swipe ends. This stays in the user file so a later Omarchy default
+-- set, turned off because this file already binds gestures, does not drop it.
+hl.gesture({
+  fingers = 3,
+  direction = "left",
+  action = function()
+    hl.dispatch(hl.dsp.focus({ workspace = "r-1" }))
+  end,
+})
+
+hl.gesture({
+  fingers = 3,
+  direction = "right",
+  action = function()
+    hl.dispatch(hl.dsp.focus({ workspace = "r+1" }))
   end,
 })
 
