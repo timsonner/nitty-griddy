@@ -4,7 +4,8 @@
 # An optional second address is one that blur-focus disarmed. Both get their
 # no_focus and focus_on_activate overrides cleared before the focus, so a
 # stashed client can take the seat again and a different stashed client is
-# not left unable to focus.
+# not left unable to focus. The picked window is also raised to the top of
+# its z-order, so it lands in front of any overlapping floating windows.
 set -euo pipefail
 
 normalize() {
@@ -53,4 +54,10 @@ fi
 
 if ! hyprctl eval "hl.dispatch(hl.dsp.focus({ window = 'address:$address' }))" >/dev/null 2>&1; then
   hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null
+fi
+
+# Raise the focused window above the rest of its floating stack. Harmless for
+# tiled windows, which do not participate in the floating z-order.
+if ! hyprctl eval "hl.dispatch(hl.dsp.window.alter_zorder({ mode = 'top', window = 'address:$address' }))" >/dev/null 2>&1; then
+  hyprctl dispatch "hl.dsp.window.alter_zorder({ mode = \"top\", window = \"address:$address\" })" >/dev/null
 fi

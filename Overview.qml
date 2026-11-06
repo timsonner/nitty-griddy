@@ -837,10 +837,16 @@ Item {
     repeat: true
     property int tries: 0
     onTriggered: {
-      if (!root.opened || root.hiding || keyCatcher.activeFocus) {
+      var win = panel.contentItem ? panel.contentItem.window : null
+      // Item focus alone is not enough: another window of the shell process
+      // (screencopy, the bar) can hold Qt's focusWindow, and keys then route
+      // there and vanish. The window itself has to be Qt-active too.
+      if (!root.opened || root.hiding || !win || (keyCatcher.activeFocus && win.active)) {
         stop()
         return
       }
+      if (win && !win.active)
+        win.requestActivate()
       keyCatcher.forceActiveFocus()
       tries++
       if (tries > 20)
@@ -964,6 +970,10 @@ Item {
     shown: root.surfaceShown
     shownKeyboardFocus: WlrKeyboardFocus.Exclusive
     WlrLayershell.layer: WlrLayer.Overlay
+    // Request the exclusive keyboard grab directly on the surface too. Going
+    // only through the wrapper's shownKeyboardFocus binding left this surface
+    // without keyboard enter after remaps, so Esc and typing never arrived.
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     WlrLayershell.namespace: "tim-nitty-griddy"
     // The shell overlay defaults to a transparent surface. A transparent pixel
     // with no input grab is a hole onto the desktop behind the grid.
