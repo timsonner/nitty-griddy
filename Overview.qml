@@ -405,6 +405,16 @@ Item {
     return text || "Window"
   }
 
+  // fcitx classic UI maps an XWayland surface while the shell holds keyboard
+  // focus. It is not a window the user opened. Leave the daemon running.
+  function isFcitxChrome(app, title) {
+    var name = String(app || "").toLowerCase()
+    if (name === "fcitx" || name === "fcitx5" || name.indexOf("fcitx5-") === 0)
+      return true
+    var text = String(title || "")
+    return text === "Fcitx5 Input Window" || text === "Fcitx5 Tray Window" || text === "Fcitx5 Menu Window"
+  }
+
   function workspaceName(workspace) {
     if (!workspace)
       return ""
@@ -521,7 +531,14 @@ Item {
   }
 
   function publish(rows) {
-    root.allWindows = rows
+    var kept = []
+    var i
+    for (i = 0; i < rows.length; i++) {
+      if (root.isFcitxChrome(rows[i].app, rows[i].title))
+        continue
+      kept.push(rows[i])
+    }
+    root.allWindows = kept
     if (root.pointerHold) {
       // A press is in flight. Rebuilding the grid now would retarget the click.
       root.deferredRefresh = true
