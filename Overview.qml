@@ -1352,7 +1352,7 @@ Item {
         opacity: 0.66
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
-        text: "Click or Enter focuses · type to filter · × / middle-click / Shift+Q closes · Esc dismisses"
+        text: "Type to filter · Arrow keys to move · Enter to focus · Esc to dismiss"
         z: 3
       }
 

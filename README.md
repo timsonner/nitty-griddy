@@ -90,7 +90,7 @@ omarchy restart shell
 | Arrow keys | Move the selection |
 | Type to filter | Narrow by title, app, or workspace. Backspace edits |
 
-The hint along the bottom reads: Click or Enter focuses · type to filter · × / middle-click / Shift+Q closes · Esc dismisses. Typing a letter filters. It does not close a window.
+The hint along the bottom reads: Type to filter · Arrow keys to move · Enter to focus · Esc to dismiss. Typing a letter filters. It does not close a window.
 
 The grid is on the focused screen. Thumbnails are live while the grid is open. Until a frame arrives, the card shows the app and the title. Window titles are plain text.
 
