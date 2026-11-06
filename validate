@@ -77,7 +77,9 @@ if grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -q 'action = "unset"';
 fi
 grep -q 'shell summon' gestures.snippet.lua || fail "snippet should document summon fallback"
 grep -q 'shell hide' gestures.snippet.lua || fail "snippet should document hide fallback"
-grep -q 'shell toggle' bindings.snippet.lua || fail "keybind should toggle via shell IPC"
+if grep -vE '^[[:space:]]*--' bindings.snippet.lua | grep -q 'SUPER + A'; then
+  fail "snippet must not bind SUPER + A"
+fi
 grep -q 'SUPER + W' bindings.snippet.lua || fail "Super+W close bind"
 grep -q 'timsonner.nitty-griddy:close-selected' bindings.snippet.lua || fail "close-selected event"
 grep -q 'omarchy plugin add' README.md || fail "README install"
