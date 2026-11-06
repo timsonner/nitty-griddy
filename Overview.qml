@@ -34,6 +34,10 @@ Item {
   property bool hiding: false
   property real reveal: 0.96
   property string filterText: ""
+  // Empty means every workspace. Otherwise the workspace name, leftmost page
+  // first: All, then 1, 2, 3, … Special workspaces stay in All only.
+  property string workspacePage: ""
+  property var pageNames: []
   property string phase: "ready"
   property string errorText: ""
   property var allWindows: []
@@ -83,7 +87,7 @@ Item {
   readonly property int gap: Style.space(14)
   readonly property string uiFont: Style.font.menuFamily
   readonly property real viewWidth: Math.max(1, panel.width - pad * 2)
-  readonly property real viewHeight: Math.max(1, panel.height - pad * 2 - Style.space(96))
+  readonly property real viewHeight: Math.max(1, panel.height - pad * 2 - Style.space(96) - Style.space(34))
   readonly property int columns: {
     var n = Math.max(1, windows.length)
     var aspect = viewWidth / Math.max(1, viewHeight)
@@ -150,6 +154,7 @@ Item {
     root.hiding = false
     root.scrollerInteractive = false
     root.filterText = ""
+    root.workspacePage = ""
     root.selectedAddress = ""
     root.selectedIndex = -1
     root.selectionPinned = false
@@ -690,6 +695,88 @@ Item {
     return ""
   }
 
+  function isPagerWorkspace(name, id) {
+    var text = String(name || "")
+    if (!text || text.indexOf("special:") === 0)
+      return false
+    if (id !== undefined && id !== null && id !== "" && Number(id) < 0)
+      return false
+    return true
+  }
+
+  // All is page 0 and is not stored here. Names are 1, 2, 3, … then any
+  // other non-special workspace, so a swipe right walks that order.
+  function rebuildPages() {
+    var seen = {}
+    var names = []
+    function add(name, id) {
+      name = String(name || "")
+      if (!root.isPagerWorkspace(name, id) || seen[name])
+        return
+      seen[name] = true
+      names.push(name)
+    }
+    var list = []
+    try {
+      if (Hyprland.workspaces && Hyprland.workspaces.values)
+        list = Hyprland.workspaces.values
+    } catch (e) {
+      list = []
+    }
+    var i
+    for (i = 0; i < list.length; i++) {
+      var ws = list[i]
+      if (ws)
+        add(root.workspaceName(ws), ws.id)
+    }
+    var rows = root.allWindows || []
+    for (i = 0; i < rows.length; i++)
+      add(rows[i].workspace, null)
+    names.sort(function(a, b) {
+      var an = /^[0-9]+$/.test(a)
+      var bn = /^[0-9]+$/.test(b)
+      if (an && bn)
+        return parseInt(a, 10) - parseInt(b, 10)
+      if (an !== bn)
+        return an ? -1 : 1
+      if (a < b)
+        return -1
+      if (a > b)
+        return 1
+      return 0
+    })
+    root.pageNames = names
+    if (root.workspacePage && names.indexOf(root.workspacePage) < 0)
+      root.workspacePage = ""
+  }
+
+  // delta -1 is toward All (left). delta +1 walks 1, 2, 3, … (right).
+  function stepWorkspace(delta) {
+    if (!root.opened || root.hiding || root.pointerHold || !delta)
+      return
+    root.rebuildPages()
+    var names = root.pageNames || []
+    var index = 0
+    if (root.workspacePage) {
+      var found = names.indexOf(root.workspacePage)
+      index = found < 0 ? 0 : found + 1
+    }
+    var next = index + delta
+    if (next < 0)
+      next = 0
+    if (next > names.length)
+      next = names.length
+    var page = next === 0 ? "" : String(names[next - 1] || "")
+    if (page === root.workspacePage)
+      return
+    root.workspacePage = page
+    root.selectedAddress = ""
+    root.selectedIndex = -1
+    root.selectionPinned = false
+    root.applyFilter()
+    scroller.contentY = 0
+  }
+
   function pushRow(rows, seen, map, row, wayland) {
     if (!row.address || seen[row.address])
       return
@@ -804,6 +891,7 @@ Item {
       kept.push(rows[i])
     }
     root.allWindows = kept
+    root.rebuildPages()
     if (root.pointerHold) {
       // A press is in flight. Rebuilding the grid now would retarget the click.
       root.deferredRefresh = true
@@ -819,6 +907,8 @@ Item {
     var i
     for (i = 0; i < root.allWindows.length; i++) {
       var row = root.allWindows[i]
+      if (root.workspacePage && String(row.workspace || "") !== root.workspacePage)
+        continue
       var hay = (row.title + " " + row.app + " " + row.appLabel + " " + row.workspace).toLowerCase()
       if (!needle || hay.indexOf(needle) !== -1)
         out.push(row)
@@ -1022,6 +1112,10 @@ Item {
       root.dismiss()
     else if (token === "timsonner.nitty-griddy:toggle")
       root.toggle()
+    else if (token === "timsonner.nitty-griddy:workspace-prev")
+      root.stepWorkspace(-1)
+    else if (token === "timsonner.nitty-griddy:workspace-next")
+      root.stepWorkspace(1)
   }
 
   function startList() {
@@ -1204,7 +1298,16 @@ Item {
           root.refresh()
       } else if (root.opened && (name === "openwindow" || name === "windowtitle" || name === "movewindow"))
         root.refresh()
+      else if (root.opened && (name === "createworkspace" || name === "destroyworkspace"))
+        root.rebuildPages()
     }
+  }
+
+  Connections {
+    target: Hyprland.workspaces
+    ignoreUnknownSignals: true
+    function onObjectInsertedPost() { if (root.opened) root.rebuildPages() }
+    function onObjectRemovedPost() { if (root.opened) root.rebuildPages() }
   }
 
   Connections {
@@ -1350,10 +1453,11 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.margins: root.pad
-        height: Style.space(58)
+        height: Style.space(92)
         z: 3
 
         Text {
+          id: titleLabel
           textFormat: Text.PlainText
           text: "NittyGriddy"
           color: root.foreground
@@ -1367,7 +1471,8 @@ Item {
         Text {
           textFormat: Text.PlainText
           anchors.left: parent.left
-          anchors.bottom: parent.bottom
+          anchors.top: titleLabel.bottom
+          anchors.topMargin: Style.space(2)
           anchors.right: parent.right
           elide: Text.ElideRight
           color: root.foreground
@@ -1381,10 +1486,48 @@ Item {
               return "Gathering windows…"
             if (root.phase === "error")
               return root.errorText
-            if (!root.windows.length && root.filterText === "" && root.allWindows.length === 0)
+            if (!root.windows.length && root.filterText === "" && root.workspacePage === "" && root.allWindows.length === 0)
               return "No open windows"
             var noun = root.windows.length === 1 ? "window" : "windows"
-            return root.windows.length + " " + noun + " · all workspaces"
+            var where = root.workspacePage ? ("workspace " + root.workspacePage) : "all workspaces"
+            return root.windows.length + " " + noun + " · " + where
+          }
+        }
+
+        Flickable {
+          id: pageStrip
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          height: Style.space(28)
+          contentWidth: pageRow.width
+          contentHeight: height
+          flickableDirection: Flickable.HorizontalFlick
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentWidth > width + 1
+          clip: true
+
+          Row {
+            id: pageRow
+            spacing: Style.space(16)
+            height: pageStrip.height
+
+            Repeater {
+              model: 1 + root.pageNames.length
+              delegate: Text {
+                required property int index
+                readonly property string pageId: index === 0 ? "" : String(root.pageNames[index - 1] || "")
+                readonly property bool current: pageId === root.workspacePage
+                textFormat: Text.PlainText
+                text: index === 0 ? "All" : pageId
+                color: current ? root.accent : root.foreground
+                opacity: current ? 1 : 0.5
+                font.family: root.uiFont
+                font.pixelSize: Style.font.body
+                font.bold: current
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
           }
         }
       }
@@ -1628,7 +1771,11 @@ Item {
                   ? root.errorText
                   : (root.phase === "loading"
                      ? "Gathering windows…"
-                     : (root.allWindows.length ? "Nothing matches that filter." : "No open windows"))
+                     : (root.filterText
+                        ? "Nothing matches that filter."
+                        : (root.workspacePage
+                           ? "No windows on workspace " + root.workspacePage
+                           : (root.allWindows.length ? "Nothing matches that filter." : "No open windows"))))
           }
         }
       }
@@ -1643,7 +1790,7 @@ Item {
         opacity: 0.66
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
-        text: "Type to filter · Arrow keys to move · Enter to focus · Esc to dismiss"
+        text: "Type to filter · Arrow keys to move · Enter to focus · Esc to dismiss · Swipe for workspace"
         z: 3
       }
 

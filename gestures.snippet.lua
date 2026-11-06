@@ -38,13 +38,23 @@ hl.gesture({
   end,
 })
 
--- Previous and next workspace, empty ones included. The switch lands when
--- the swipe ends. This stays in the user file so a later Omarchy default
--- set, turned off because this file already binds gestures, does not drop it.
+-- While the grid is open, left and right page its workspace filter.
+-- All is the leftmost page, then workspace 1, 2, 3, and so on.
+-- Right walks forward. Left walks back toward All. The desktop workspace
+-- stays put. When the grid is closed, the same swipes still move workspace.
+local function nitty_griddy_mapped()
+  local layers = hl.get_layers({ namespace = "timsonner-nitty-griddy" })
+  return layers ~= nil and #layers > 0
+end
+
 hl.gesture({
   fingers = 3,
   direction = "left",
   action = function()
+    if nitty_griddy_mapped() then
+      hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:workspace-prev"))
+      return
+    end
     hl.dispatch(hl.dsp.focus({ workspace = "r-1" }))
   end,
 })
@@ -53,6 +63,10 @@ hl.gesture({
   fingers = 3,
   direction = "right",
   action = function()
+    if nitty_griddy_mapped() then
+      hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:workspace-next"))
+      return
+    end
     hl.dispatch(hl.dsp.focus({ workspace = "r+1" }))
   end,
 })

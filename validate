@@ -62,6 +62,11 @@ grep -q 'timsonner.nitty-griddy:open' gestures.snippet.lua || fail "gesture open
 grep -q 'timsonner.nitty-griddy:close' gestures.snippet.lua || fail "gesture close event"
 grep -q 'workspace = "r-1"' gestures.snippet.lua || fail "gesture previous workspace"
 grep -q 'workspace = "r+1"' gestures.snippet.lua || fail "gesture next workspace"
+grep -q 'timsonner.nitty-griddy:workspace-prev' gestures.snippet.lua || fail "gesture workspace prev"
+grep -q 'timsonner.nitty-griddy:workspace-next' gestures.snippet.lua || fail "gesture workspace next"
+grep -q 'timsonner.nitty-griddy:workspace-prev' Overview.qml || fail "overview workspace prev"
+grep -q 'timsonner.nitty-griddy:workspace-next' Overview.qml || fail "overview workspace next"
+grep -q 'function stepWorkspace' Overview.qml || fail "overview stepWorkspace"
 # Comments may warn about the flag. An actual assignment must not.
 if grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -q 'omarchy_default_gestures'; then
   fail "snippet must not set omarchy_default_gestures"
