@@ -18,7 +18,7 @@ for field in id name version kinds entryPoints; do
 done
 
 id=$(jq -r '.id' manifest.json)
-[[ $id == "tim.nitty-griddy" ]] || fail "id is '$id', expected tim.nitty-griddy"
+[[ $id == "timsonner.nitty-griddy" ]] || fail "id is '$id', expected timsonner.nitty-griddy"
 [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "invalid plugin id"
 [[ $id != omarchy.* ]] || fail "reserved id"
 
@@ -48,7 +48,7 @@ bash -n validate
 qml=Overview.qml
 for token in \
   'function open' 'function close' 'function dismiss' \
-  'tim.nitty-griddy:open' 'tim.nitty-griddy:close' \
+  'timsonner.nitty-griddy:open' 'timsonner.nitty-griddy:close' \
   'Key_Escape' 'MiddleButton' 'ShiftModifier' \
   'focus-window' 'close-window' 'blur-focus' 'priorAddress' 'Text.PlainText' \
   'shell.hide' 'ScreencopyView'
@@ -58,8 +58,8 @@ done
 
 grep -q 'direction = "up"' gestures.snippet.lua || fail "gesture up"
 grep -q 'direction = "down"' gestures.snippet.lua || fail "gesture down"
-grep -q 'tim.nitty-griddy:open' gestures.snippet.lua || fail "gesture open event"
-grep -q 'tim.nitty-griddy:close' gestures.snippet.lua || fail "gesture close event"
+grep -q 'timsonner.nitty-griddy:open' gestures.snippet.lua || fail "gesture open event"
+grep -q 'timsonner.nitty-griddy:close' gestures.snippet.lua || fail "gesture close event"
 grep -q 'workspace = "r-1"' gestures.snippet.lua || fail "gesture previous workspace"
 grep -q 'workspace = "r+1"' gestures.snippet.lua || fail "gesture next workspace"
 # Comments may warn about the flag. An actual assignment must not.
@@ -77,14 +77,14 @@ grep -q 'omarchy plugin add' README.md || fail "README install"
 grep -q 'gestures.lua' README.md || fail "README gestures path"
 grep -q 'omarchy restart shell' README.md || fail "README shell restart"
 grep -q 'omarchy_default_gestures = false' README.md || fail "README must warn against disabling default gestures"
-grep -q 'shell summon tim.nitty-griddy' README.md || fail "README summon"
-grep -q 'shell hide tim.nitty-griddy' README.md || fail "README hide"
+grep -q 'shell summon timsonner.nitty-griddy' README.md || fail "README summon"
+grep -q 'shell hide timsonner.nitty-griddy' README.md || fail "README hide"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 # The helper ignores a state path that does not end with its own file name.
-export NITTY_GRIDDY_WARP_STATE=$tmp/tim.nitty-griddy.no-warps
-export NITTY_GRIDDY_SPECIAL_STATE=$tmp/tim.nitty-griddy.specials
+export NITTY_GRIDDY_WARP_STATE=$tmp/timsonner.nitty-griddy.no-warps
+export NITTY_GRIDDY_SPECIAL_STATE=$tmp/timsonner.nitty-griddy.specials
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/hyprctl" <<'SH'
 #!/bin/bash

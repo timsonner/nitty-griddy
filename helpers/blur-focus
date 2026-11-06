@@ -55,16 +55,16 @@
 set -euo pipefail
 
 init_warp_paths() {
-  local base=${NITTY_GRIDDY_WARP_STATE:-${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.no-warps}
+  local base=${NITTY_GRIDDY_WARP_STATE:-${XDG_RUNTIME_DIR:-/tmp}/timsonner.nitty-griddy.no-warps}
   case $base in
     *[!A-Za-z0-9/_.-]*)
-      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.no-warps
+      base=${XDG_RUNTIME_DIR:-/tmp}/timsonner.nitty-griddy.no-warps
       ;;
   esac
   case $base in
-    *tim.nitty-griddy.no-warps) ;;
+    *timsonner.nitty-griddy.no-warps) ;;
     *)
-      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.no-warps
+      base=${XDG_RUNTIME_DIR:-/tmp}/timsonner.nitty-griddy.no-warps
       ;;
   esac
   WARP_STATE=$base
@@ -282,16 +282,16 @@ reconcile_no_warps() {
 }
 
 init_special_paths() {
-  local base=${NITTY_GRIDDY_SPECIAL_STATE:-${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.specials}
+  local base=${NITTY_GRIDDY_SPECIAL_STATE:-${XDG_RUNTIME_DIR:-/tmp}/timsonner.nitty-griddy.specials}
   case $base in
     *[!A-Za-z0-9/_.-]*)
-      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.specials
+      base=${XDG_RUNTIME_DIR:-/tmp}/timsonner.nitty-griddy.specials
       ;;
   esac
   case $base in
-    *tim.nitty-griddy.specials) ;;
+    *timsonner.nitty-griddy.specials) ;;
     *)
-      base=${XDG_RUNTIME_DIR:-/tmp}/tim.nitty-griddy.specials
+      base=${XDG_RUNTIME_DIR:-/tmp}/timsonner.nitty-griddy.specials
       ;;
   esac
   SPECIAL_STATE=$base

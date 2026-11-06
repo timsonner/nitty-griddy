@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "tim.nitty-griddy",
+  "id": "timsonner.nitty-griddy",
   "name": "NittyGriddy",
-  "version": "1.1.0",
+  "version": "1.0.0",
   "author": "Tim Sonner",
   "license": "MIT",
   "description": "Window grid overview for Omarchy — three-finger up opens every window, down dismisses.",

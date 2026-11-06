@@ -1,4 +1,4 @@
--- NittyGriddy (tim.nitty-griddy)
+-- NittyGriddy (timsonner.nitty-griddy)
 --
 -- Drop this into ~/.config/hypr/gestures.lua.
 -- Stock Omarchy does not load that file. In ~/.config/hypr/hyprland.lua,
@@ -23,9 +23,9 @@ hl.gesture({
   fingers = 3,
   direction = "up",
   action = function()
-    -- Explicit open. hl.dsp.event posts custom>>tim.nitty-griddy:open on socket2.
+    -- Explicit open. hl.dsp.event posts custom>>timsonner.nitty-griddy:open on socket2.
     -- The keepLoaded overlay listens for that. It never toggles closed.
-    hl.dispatch(hl.dsp.event("tim.nitty-griddy:open"))
+    hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:open"))
   end,
 })
 
@@ -34,7 +34,7 @@ hl.gesture({
   direction = "down",
   action = function()
     -- Explicit dismiss. A no-op when the overview is already closed.
-    hl.dispatch(hl.dsp.event("tim.nitty-griddy:close"))
+    hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:close"))
   end,
 })
 
@@ -61,8 +61,8 @@ hl.gesture({
 -- seeing socket2 custom events. Replace the two hl.dispatch lines above with
 -- the official summon/hide IPC (also explicit open and close, not toggle):
 --
---   hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell summon tim.nitty-griddy '{}'"))
---   hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell hide tim.nitty-griddy"))
+--   hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell summon timsonner.nitty-griddy '{}'"))
+--   hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell hide timsonner.nitty-griddy"))
 --
 -- Use exec_cmd, not a bare hl.dsp.exec_cmd() call. The bare call only builds
 -- a dispatcher. hl.dispatch runs it, and exec_cmd goes through a shell so the

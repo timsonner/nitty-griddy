@@ -11,7 +11,7 @@ import qs.Ui
 // NittyGriddy overlay for Omarchy Quattro.
 // The shell calls open(payloadJson) on summon and close() on hide.
 // keepLoaded keeps this item mounted, so socket2 custom events and the
-// tim.nitty-griddy IPC target are live before the first swipe.
+// timsonner.nitty-griddy IPC target are live before the first swipe.
 Item {
   id: root
 
@@ -19,11 +19,11 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "tim.nitty-griddy"
+  readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "timsonner.nitty-griddy"
   readonly property string pluginDir: {
     var dir = (manifest && manifest.__sourceDir) ? String(manifest.__sourceDir) : ""
     if (!dir)
-      dir = Quickshell.env("HOME") + "/.config/omarchy/plugins/tim.nitty-griddy"
+      dir = Quickshell.env("HOME") + "/.config/omarchy/plugins/timsonner.nitty-griddy"
     while (dir.length > 1 && dir.charAt(dir.length - 1) === "/")
       dir = dir.slice(0, dir.length - 1)
     return dir
@@ -1016,11 +1016,11 @@ Item {
   }
 
   function handleCustom(token) {
-    if (token === "tim.nitty-griddy:open")
+    if (token === "timsonner.nitty-griddy:open")
       root.open("{}")
-    else if (token === "tim.nitty-griddy:close")
+    else if (token === "timsonner.nitty-griddy:close")
       root.dismiss()
-    else if (token === "tim.nitty-griddy:toggle")
+    else if (token === "timsonner.nitty-griddy:toggle")
       root.toggle()
   }
 
@@ -1194,7 +1194,7 @@ Item {
       var data = String(event.data || "").trim()
       if (name === "custom")
         root.handleCustom(data)
-      else if (name.indexOf("tim.nitty-griddy:") === 0)
+      else if (name.indexOf("timsonner.nitty-griddy:") === 0)
         root.handleCustom(name)
       else if (name === "closewindow") {
         var gone = root.eventAddress(data)
@@ -1241,7 +1241,7 @@ Item {
   }
 
   IpcHandler {
-    target: "tim.nitty-griddy"
+    target: "timsonner.nitty-griddy"
     function open(): string {
       root.open("{}")
       return "ok"
@@ -1265,7 +1265,7 @@ Item {
     // only through the wrapper's shownKeyboardFocus binding left this surface
     // without keyboard enter after remaps, so Esc and typing never arrived.
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
-    WlrLayershell.namespace: "tim-nitty-griddy"
+    WlrLayershell.namespace: "timsonner-nitty-griddy"
     // The shell overlay defaults to a transparent surface. A transparent pixel
     // with no input grab is a hole onto the desktop behind the grid.
     color: root.scrim
