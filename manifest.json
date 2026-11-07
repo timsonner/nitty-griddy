@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "Tim Sonner",
   "license": "MIT",
-  "description": "Window grid overview for Omarchy — three-finger up opens every window, down dismisses.",
+  "description": "Window grid overview for Omarchy - Provides similar experience to Gnome or MacOS users to view and manage windows across multiple workspaces. Features: Three-finger up opens overview, down dismisses, swipe left or right switches workspaces. Super+shift moves windows to workspaces and super+w closes windows.",
   "kinds": ["overlay"],
   "keepLoaded": true,
   "entryPoints": {
