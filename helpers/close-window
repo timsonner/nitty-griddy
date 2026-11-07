@@ -1,5 +1,5 @@
 #!/bin/bash
-# Ask Hyprland to close one window. Graceful close only — this does not signal
+# Ask Hyprland to close one window. Graceful close only. This does not signal
 # the process, and it does not close the shell.
 set -euo pipefail
 

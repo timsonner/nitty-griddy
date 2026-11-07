@@ -524,7 +524,7 @@ Item {
   // Screencopy and the shell can take active focus after open, and Esc then
   // falls through to the quake console. keyCatcher is zero-size and is not
   // stacked over the cards, so this reclaim never blocks the pointer. Keep it
-  // for the whole time the grid is open — do not shrink it back to a short burst.
+  // for the whole time the grid is open. Do not shrink it back to a short burst.
   function reclaimFocus() {
     if (!root.opened || root.hiding)
       return
@@ -780,7 +780,7 @@ Item {
   }
 
   // All is page 0 and is not stored here. Entries are Hyprland workspace ids.
-  // 1–5 of this monitor are always present. The row then grows through the
+  // Slots 1-5 of this monitor are always present. The row then grows through the
   // highest slot that exists, filling the empty numbers in between.
   function rebuildPages() {
     var block = root.currentBlock()
@@ -1202,7 +1202,7 @@ Item {
   }
 
   // Super+Shift+number while the grid is open. Same slots as Omarchy:
-  // 1–9, and 10 on the 0 key. Nothing selected does not move the window
+  // 1-9, and 10 on the 0 key. Nothing selected does not move the window
   // behind the grid. The desktop follows the card, as the normal chord does.
   function moveSelectedToSlot(slot) {
     if (!root.opened || root.hiding || root.pointerHold)

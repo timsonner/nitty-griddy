@@ -1,6 +1,30 @@
 # NittyGriddy
 
-Window grid overview for Omarchy — three-finger up opens every window, down dismisses.
+Window grid overview for Omarchy. It shows every open window on the focused screen. Three-finger swipes open and dismiss it after you copy the gesture snippet.
+
+## What the plugin does
+
+Enabling the plugin installs the overlay. It does not change your Hyprland swipes or keys.
+
+- The grid opens on the focused screen, on All, and lists open windows. Live thumbnails appear when Hyprland can export them.
+- The strip keeps this monitor's workspaces 1 through 5 even when empty. It grows through the highest workspace that exists, up to 10, and keeps the empty numbers in between.
+- Click a card to focus that window. Click the × to close it. Click the empty backdrop to dismiss the grid.
+- Arrow keys move the selection. Enter focuses the selected window. Typing filters by title, app, or workspace.
+- Middle-click and Shift+Q do not close a card. Super+Q is not changed. It still closes the focused window, including while the grid is open.
+- While the grid is open the pointer stays where it is, and a visible quake console is hidden. Dismissing the grid brings that console back.
+
+## What you set up
+
+Copy `gestures.snippet.lua` and `bindings.snippet.lua` into `~/.config/hypr/`, then reload Hyprland and restart the shell. The steps are under Swipes and shortcuts. Until you do that, three-finger swipes stay as they are, and Escape, Super+W, and Super+Shift+number keep Omarchy's behavior. The grid will not see them.
+
+After the snippets are in place:
+
+- Three-finger up opens the grid. Down dismisses it. Left and right switch workspaces while the grid is closed, and page the strip while it is open. The desktop workspace stays put during that paging.
+- Escape dismisses the grid only while it is open.
+- Super+W closes the selected card while the grid is open, and still closes the focused window when the grid is closed.
+- Super+Shift+1 through Super+Shift+9, and Super+Shift+0 for workspace 10, move the selected card while the grid is open and follow it. With the grid closed, the same chords still move the focused window.
+
+The plugin does not bind Super+A. Omarchy uses that chord for Select all.
 
 ## Requirements
 
@@ -20,6 +44,8 @@ omarchy plugin add https://github.com/timsonner/nitty-griddy --enable --yes
 That clones the plugin to `~/.config/omarchy/plugins/timsonner.nitty-griddy/`. Plugin id: `timsonner.nitty-griddy`.
 
 ## Swipes and shortcuts
+
+These swipes and keys are yours to install. The pointer actions further down are part of the overlay and need no extra bind.
 
 Copy `gestures.snippet.lua` to `~/.config/hypr/gestures.lua`. Copy `bindings.snippet.lua` into `~/.config/hypr/bindings.lua`. `~/.config/hypr/hyprland.lua` does not load `gestures.lua` unless you require it. Add that require after `require("default.hypr.omarchy")`:
 
