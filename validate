@@ -81,6 +81,8 @@ if grep -vE '^[[:space:]]*--' bindings.snippet.lua | grep -q 'SUPER + A'; then
   fail "snippet must not bind SUPER + A"
 fi
 grep -q 'SUPER + W' bindings.snippet.lua || fail "Super+W close bind"
+grep -q 'timsonner.nitty-griddy:move-to-' bindings.snippet.lua || fail "move-to event"
+grep -q 'moveSelectedToSlot' Overview.qml || fail "overview moveSelectedToSlot"
 grep -q 'timsonner.nitty-griddy:close-selected' bindings.snippet.lua || fail "close-selected event"
 grep -q 'omarchy plugin add' README.md || fail "README install"
 grep -q 'gestures.lua' README.md || fail "README gestures path"

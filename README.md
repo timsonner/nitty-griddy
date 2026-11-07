@@ -48,7 +48,7 @@ Three fingers. The grid opens on All: every window, including ones on a special 
 |---|---|---|
 | Up | Opens the grid | Opens the grid. It does not toggle closed |
 | Down | Does nothing. It does not open the menu or a console | Dismisses the grid. Focus returns to the window that was focused, if it is still open. A quake console that was showing comes back |
-| Right | Next workspace, including an empty one | Next page: All, then workspace 1, 2, 3, and so on. The desktop workspace stays put |
+| Right | Next workspace, including an empty one | Next page. All, then this monitor's workspaces. 1 through 5 stay even when empty. The row grows when a higher workspace exists, and empty numbers in between stay. The desktop workspace stays put |
 | Left | Previous workspace, including an empty one | Previous page, back toward All. The desktop workspace stays put |
 
 `hl.dsp.event` posts `custom>>timsonner.nitty-griddy:open` or `custom>>timsonner.nitty-griddy:close` on Hyprland’s socket2. The overlay is `keepLoaded`, so the shell mounts it at startup and it hears those events.
@@ -60,6 +60,7 @@ Three fingers. The grid opens on All: every window, including ones on a special 
 | Escape | Passes through to the focused app | Dismisses the grid. The compositor bind runs before an input method, so this still works while fcitx5 is running |
 | Super+W | Closes the focused window | Closes the selected card. The grid stays if other windows remain. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not close the window behind the grid |
 | Super+Q | Closes the focused window. The snippet does not change this chord | Still closes the focused window, not the card |
+| Super+Shift+1 through Super+Shift+9, and Super+Shift+0 | Moves the focused window to that workspace. 0 is workspace 10, same as the bar | Moves the selected card there and follows it. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not move the window behind the grid |
 | Arrow keys | Unchanged | Move the selection |
 | Enter | Unchanged | Focuses the selected window and dismisses the grid. The pointer stays where it is |
 | Type, Backspace | Unchanged | Filters by title, app, or workspace. A letter does not close a window |
@@ -133,7 +134,7 @@ hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell hide timsonner.nitty-griddy"))
 
 ## Uninstall
 
-Remove the NittyGriddy gestures from `~/.config/hypr/gestures.lua`, and remove `require("hypr.gestures")` if this plugin was the only reason it was there. In `~/.config/hypr/bindings.lua`, remove the Escape dismiss bind and the Super+W rebind. Deleting that rebind gives Super+W back to Omarchy’s close-window bind. Then:
+Remove the NittyGriddy gestures from `~/.config/hypr/gestures.lua`, and remove `require("hypr.gestures")` if this plugin was the only reason it was there. In `~/.config/hypr/bindings.lua`, remove the Escape dismiss bind, the Super+W rebind, and the Super+Shift+number rebinds. Deleting that rebind gives Super+W back to Omarchy’s close-window bind. Then:
 
 ```sh
 omarchy plugin remove timsonner.nitty-griddy --yes

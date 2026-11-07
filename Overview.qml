@@ -34,10 +34,14 @@ Item {
   property bool hiding: false
   property real reveal: 0.96
   property string filterText: ""
-  // Empty means every workspace. Otherwise the workspace name, leftmost page
-  // first: All, then 1, 2, 3, … Special workspaces stay in All only.
+  // Empty means every workspace. Otherwise the Hyprland workspace id.
+  // The strip shows All, then this monitor's numbers. 1 through 5 stay even
+  // when empty. The row grows through workspaceSlots as higher ones exist,
+  // and a workspace visiting from another monitor is added after those.
   property string workspacePage: ""
   property var pageNames: []
+  readonly property int workspaceSlots: 10
+  property var monitorBlocks: ({})
   property string phase: "ready"
   property string errorText: ""
   property var allWindows: []
@@ -697,25 +701,94 @@ Item {
 
   function isPagerWorkspace(name, id) {
     var text = String(name || "")
-    if (!text || text.indexOf("special:") === 0)
+    if (text.indexOf("special:") === 0)
       return false
     if (id !== undefined && id !== null && id !== "" && Number(id) < 0)
       return false
     return true
   }
 
-  // All is page 0 and is not stored here. Names are 1, 2, 3, … then any
-  // other non-special workspace, so a swipe right walks that order.
-  function rebuildPages() {
-    var seen = {}
-    var names = []
-    function add(name, id) {
-      name = String(name || "")
-      if (!root.isPagerWorkspace(name, id) || seen[name])
-        return
-      seen[name] = true
-      names.push(name)
+  function readMonitorBlocks(text) {
+    var next = {}
+    var lines = String(text || "").split("\n")
+    var i
+    for (i = 0; i < lines.length; i++) {
+      var fields = lines[i].split("\t")
+      if (fields.length >= 3 && fields[1] !== "")
+        next[fields[1]] = parseInt(fields[0], 10)
     }
+    root.monitorBlocks = next
+    if (root.opened)
+      root.rebuildPages()
+  }
+
+  function gridMonitor() {
+    var list = []
+    try {
+      if (Hyprland.monitors && Hyprland.monitors.values)
+        list = Hyprland.monitors.values
+    } catch (e) {
+      list = []
+    }
+    var i
+    for (i = 0; i < list.length; i++) {
+      if (list[i] && list[i].focused)
+        return list[i]
+    }
+    try {
+      if (Hyprland.focusedMonitor)
+        return Hyprland.focusedMonitor
+    } catch (e2) {}
+    return list.length ? list[0] : null
+  }
+
+  function currentBlock() {
+    var mon = root.gridMonitor()
+    var name = mon ? String(mon.name || "") : ""
+    if (name && root.monitorBlocks[name] !== undefined && !isNaN(root.monitorBlocks[name]))
+      return root.monitorBlocks[name]
+    var active = mon && mon.activeWorkspace ? Number(mon.activeWorkspace.id) : 0
+    if (active > 0)
+      return Math.floor((active - 1) / root.workspaceSlots)
+    return 0
+  }
+
+  function blockOf(id) {
+    return Math.floor((Number(id) - 1) / root.workspaceSlots)
+  }
+
+  function slotOf(id) {
+    return (Number(id) - 1) % root.workspaceSlots + 1
+  }
+
+  // 1 through 9, and 10 for the key Super+Shift+0. A visiting workspace
+  // keeps its Hyprland id so it is not mistaken for this monitor's slot.
+  function pageLabel(id) {
+    var n = Number(id)
+    if (!(n > 0))
+      return ""
+    if (root.blockOf(n) !== root.currentBlock())
+      return String(n)
+    return String(root.slotOf(n))
+  }
+
+  function workspaceIdForSlot(slot) {
+    var n = parseInt(slot, 10)
+    if (!(n >= 1 && n <= root.workspaceSlots))
+      return 0
+    return root.currentBlock() * root.workspaceSlots + n
+  }
+
+  // All is page 0 and is not stored here. Entries are Hyprland workspace ids.
+  // 1–5 of this monitor are always present. The row then grows through the
+  // highest slot that exists, filling the empty numbers in between.
+  function rebuildPages() {
+    var block = root.currentBlock()
+    var slots = root.workspaceSlots
+    var base = block * slots
+    var highest = 5
+    var guests = []
+    var seenGuest = {}
     var list = []
     try {
       if (Hyprland.workspaces && Hyprland.workspaces.values)
@@ -723,28 +796,33 @@ Item {
     } catch (e) {
       list = []
     }
+    var mon = root.gridMonitor()
+    var monitorName = mon ? String(mon.name || "") : ""
     var i
     for (i = 0; i < list.length; i++) {
       var ws = list[i]
-      if (ws)
-        add(root.workspaceName(ws), ws.id)
+      if (!ws || !root.isPagerWorkspace(root.workspaceName(ws), ws.id))
+        continue
+      var id = Number(ws.id)
+      if (!(id > 0))
+        continue
+      if (root.blockOf(id) === block) {
+        var slot = root.slotOf(id)
+        if (slot > highest)
+          highest = slot
+      } else if (ws.monitor && String(ws.monitor.name || "") === monitorName && !seenGuest[id]) {
+        seenGuest[id] = true
+        guests.push(id)
+      }
     }
-    var rows = root.allWindows || []
-    for (i = 0; i < rows.length; i++)
-      add(rows[i].workspace, null)
-    names.sort(function(a, b) {
-      var an = /^[0-9]+$/.test(a)
-      var bn = /^[0-9]+$/.test(b)
-      if (an && bn)
-        return parseInt(a, 10) - parseInt(b, 10)
-      if (an !== bn)
-        return an ? -1 : 1
-      if (a < b)
-        return -1
-      if (a > b)
-        return 1
-      return 0
-    })
+    if (highest > slots)
+      highest = slots
+    var names = []
+    for (i = 1; i <= highest; i++)
+      names.push(String(base + i))
+    guests.sort(function(a, b) { return a - b })
+    for (i = 0; i < guests.length; i++)
+      names.push(String(guests[i]))
     root.pageNames = names
     if (root.workspacePage && names.indexOf(root.workspacePage) < 0)
       root.workspacePage = ""
@@ -817,6 +895,7 @@ Item {
           app: app,
           appLabel: root.prettyApp(app),
           workspace: ws,
+          workspaceId: item.workspace && item.workspace.id !== undefined ? Number(item.workspace.id) : 0,
           activated: !!item.activated
         }, wayland)
       } else {
@@ -868,6 +947,7 @@ Item {
       app: app,
       appLabel: root.prettyApp(app),
       workspace: ws,
+      workspaceId: attached && attached.workspace && attached.workspace.id !== undefined ? Number(attached.workspace.id) : 0,
       activated: activated
     }, top)
   }
@@ -907,8 +987,16 @@ Item {
     var i
     for (i = 0; i < root.allWindows.length; i++) {
       var row = root.allWindows[i]
-      if (root.workspacePage && String(row.workspace || "") !== root.workspacePage)
-        continue
+      if (root.workspacePage) {
+        var pageId = Number(root.workspacePage)
+        var rowId = Number(row.workspaceId || 0)
+        if (rowId > 0) {
+          if (rowId !== pageId)
+            continue
+        } else if (String(row.workspace || "") !== root.workspacePage && String(row.workspace || "") !== root.pageLabel(root.workspacePage)) {
+          continue
+        }
+      }
       var hay = (row.title + " " + row.app + " " + row.appLabel + " " + row.workspace).toLowerCase()
       if (!needle || hay.indexOf(needle) !== -1)
         out.push(row)
@@ -1113,6 +1201,31 @@ Item {
     root.closeIndex(root.selectedIndex)
   }
 
+  // Super+Shift+number while the grid is open. Same slots as Omarchy:
+  // 1–9, and 10 on the 0 key. Nothing selected does not move the window
+  // behind the grid. The desktop follows the card, as the normal chord does.
+  function moveSelectedToSlot(slot) {
+    if (!root.opened || root.hiding || root.pointerHold)
+      return
+    if (root.selectedIndex < 0 || root.selectedIndex >= root.windows.length)
+      return
+    var row = root.windows[root.selectedIndex]
+    var address = root.hexAddress(row && row.address)
+    var id = root.workspaceIdForSlot(slot)
+    if (!address || !id)
+      return
+    Quickshell.execDetached([
+      "hyprctl", "dispatch",
+      "hl.dsp.window.move({ workspace = \"" + id + "\", follow = true, window = \"address:" + address + "\" })"
+    ])
+    root.workspacePage = String(id)
+    root.selectedAddress = address
+    root.selectionPinned = true
+    root.rebuildPages()
+    root.applyFilter()
+    root.refresh()
+  }
+
   function handleCustom(token) {
     if (token === "timsonner.nitty-griddy:open")
       root.open("{}")
@@ -1126,6 +1239,8 @@ Item {
       root.stepWorkspace(1)
     else if (token === "timsonner.nitty-griddy:close-selected")
       root.closeSelected()
+    else if (token.indexOf("timsonner.nitty-griddy:move-to-") === 0)
+      root.moveSelectedToSlot(token.substring("timsonner.nitty-griddy:move-to-".length))
   }
 
   function startList() {
@@ -1159,6 +1274,7 @@ Item {
         app: app,
         appLabel: root.prettyApp(app),
         workspace: String((row && row.workspace) || ""),
+        workspaceId: Number((row && row.workspaceId) || 0),
         activated: false
       })
     } catch (e) {
@@ -1351,6 +1467,15 @@ Item {
     }
   }
 
+  FileView {
+    path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/monitor-workspaces"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.readMonitorBlocks(text())
+    onLoadFailed: root.readMonitorBlocks("")
+  }
+
   IpcHandler {
     target: "timsonner.nitty-griddy"
     function open(): string {
@@ -1497,7 +1622,7 @@ Item {
             if (!root.windows.length && root.filterText === "" && root.workspacePage === "" && root.allWindows.length === 0)
               return "No open windows"
             var noun = root.windows.length === 1 ? "window" : "windows"
-            var where = root.workspacePage ? ("workspace " + root.workspacePage) : "all workspaces"
+            var where = root.workspacePage ? ("workspace " + root.pageLabel(root.workspacePage)) : "all workspaces"
             return root.windows.length + " " + noun + " · " + where
           }
         }
@@ -1527,7 +1652,7 @@ Item {
                 readonly property string pageId: index === 0 ? "" : String(root.pageNames[index - 1] || "")
                 readonly property bool current: pageId === root.workspacePage
                 textFormat: Text.PlainText
-                text: index === 0 ? "All" : pageId
+                text: index === 0 ? "All" : root.pageLabel(pageId)
                 color: current ? root.accent : root.foreground
                 opacity: current ? 1 : 0.5
                 font.family: root.uiFont
@@ -1779,7 +1904,7 @@ Item {
                      : (root.filterText
                         ? "Nothing matches that filter."
                         : (root.workspacePage
-                           ? "No windows on workspace " + root.workspacePage
+                           ? "No windows on workspace " + root.pageLabel(root.workspacePage)
                            : (root.allWindows.length ? "Nothing matches that filter." : "No open windows"))))
           }
         }

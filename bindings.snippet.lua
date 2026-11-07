@@ -37,3 +37,22 @@ end
 
 o.bind_commands[close_nitty_or_window] = "hl.dsp.window.close()"
 o.rebind("SUPER + W", "Close window", close_nitty_or_window)
+
+-- Super+Shift+1 through 9, and Super+Shift+0 for workspace 10, move the
+-- focused window. While the grid is open the same chords move the selected
+-- card and follow it. Nothing selected does not move the window behind the grid.
+for slot = 1, 10 do
+  local n = slot
+  local function move_nitty_or_window()
+    if nitty_griddy_mapped() then
+      hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:move-to-" .. n))
+      return
+    end
+    local move = o.workspaces.move_window(n)
+    if move then
+      move()
+    end
+  end
+  o.bind_commands[move_nitty_or_window] = "o.workspaces.move_window(" .. n .. ")"
+  o.rebind("SUPER + SHIFT + code:" .. tostring(n + 9), "Move window to workspace " .. n, move_nitty_or_window)
+end
