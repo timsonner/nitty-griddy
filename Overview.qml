@@ -7,6 +7,7 @@ import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "workspace-label.js" as Labels
 
 // NittyGriddy overlay for Omarchy Quattro.
 // The shell calls open(payloadJson) on summon and close() on hide.
@@ -669,22 +670,7 @@ Item {
   }
 
   function prettyApp(app, title) {
-    var text = String(app || "")
-    var slash = text.lastIndexOf("/")
-    if (slash >= 0)
-      text = text.slice(slash + 1)
-    var dot = text.lastIndexOf(".")
-    if (dot >= 0 && dot < text.length - 1)
-      text = text.slice(dot + 1)
-    var label = text || "Window"
-    // Grok Build's window class is the terminal it runs in (foot), and the
-    // quake console's class is org.omarchy.agent. A grok title should not
-    // read as a plain terminal.
-    var kind = label.toLowerCase()
-    var titled = String(title || "").toLowerCase()
-    if (titled.indexOf("grok") !== -1 && (kind === "foot" || kind === "agent" || kind === "kitty" || kind === "alacritty" || kind === "ghostty" || kind === "wezterm"))
-      return "grok"
-    return label
+    return Labels.prettyApp(app, title)
   }
 
   // fcitx classic UI maps an XWayland surface while the shell holds keyboard
@@ -698,22 +684,11 @@ Item {
   }
 
   function workspaceName(workspace) {
-    if (!workspace)
-      return ""
-    if (workspace.name !== undefined && String(workspace.name || "") !== "")
-      return String(workspace.name)
-    if (workspace.id !== undefined && workspace.id !== null && String(workspace.id) !== "")
-      return String(workspace.id)
-    return ""
+    return Labels.workspaceName(workspace)
   }
 
   function isPagerWorkspace(name, id) {
-    var text = String(name || "")
-    if (text.indexOf("special:") === 0)
-      return false
-    if (id !== undefined && id !== null && id !== "" && Number(id) < 0)
-      return false
-    return true
+    return Labels.isPagerWorkspace(name, id)
   }
 
   function readMonitorBlocks(text) {
@@ -762,20 +737,17 @@ Item {
   }
 
   function blockOf(id) {
-    return Math.floor((Number(id) - 1) / root.workspaceSlots)
+    return Labels.blockOf(id, root.workspaceSlots)
   }
 
   function slotOf(id) {
-    return (Number(id) - 1) % root.workspaceSlots + 1
+    return Labels.slotOf(id, root.workspaceSlots)
   }
 
   // The number Super+N and the bar use. Hyprland's id is the monitor block
   // times 10, plus this slot, so 14 is workspace 4 on the second monitor.
   function pageLabel(id) {
-    var n = Number(id)
-    if (!(n > 0))
-      return ""
-    return String(root.slotOf(n))
+    return Labels.pageLabel(id, root.workspaceSlots)
   }
 
   // The workstation the monitor is showing. A special workspace such as the
@@ -823,59 +795,25 @@ Item {
     return root.monitorActiveId(root.monitorByIpcId(ipc.monitor))
   }
 
-  // Positive Hyprland ids are real workstations. Special ids are not, so use
-  // the monitor's current workstation. Never surface "special:qconsole".
   function displayWorkspaceId(row) {
-    if (!row)
-      return 0
-    var n = Number(row.workspaceId)
-    if (n > 0)
-      return n
-    var mon = Number(row.monitorWorkspaceId)
-    if (mon > 0)
-      return mon
-    if (String(row.workspace || "").indexOf("special:") === 0)
-      return 0
-    var named = Number(row.workspace)
-    if (named > 0)
-      return named
-    return 0
+    return Labels.displayWorkspaceId(row)
   }
 
   function rowWorkspaceLabel(row) {
-    var n = root.displayWorkspaceId(row)
-    if (n > 0)
-      return root.pageLabel(n)
-    return ""
+    return Labels.rowWorkspaceLabel(row, root.workspaceSlots)
   }
 
   // Hyprland id of a strip page, or empty when that workstation is not on this monitor.
   function pageForWorkspaceId(id) {
-    var n = Number(id)
-    if (!(n > 0))
-      return ""
-    var key = String(n)
-    if ((root.pageNames || []).indexOf(key) < 0)
-      return ""
-    return key
+    return Labels.pageForWorkspaceId(id, root.pageNames)
   }
 
   function workspaceIdForSlot(slot) {
-    var n = parseInt(slot, 10)
-    if (!(n >= 1 && n <= root.workspaceSlots))
-      return 0
-    return root.currentBlock() * root.workspaceSlots + n
+    return Labels.workspaceIdForSlot(slot, root.currentBlock(), root.workspaceSlots)
   }
 
   // All is page 0 and is not stored here. Entries are Hyprland workspace ids.
-  // Slots 1-9 of this monitor are always present. Slot 10 is added when it
-  // exists. Workspaces pinned under another block's ids are not listed again,
-  // or the row would read 1-9 and then 1-3.
   function rebuildPages() {
-    var block = root.currentBlock()
-    var slots = root.workspaceSlots
-    var base = block * slots
-    var highest = 9
     var list = []
     try {
       if (Hyprland.workspaces && Hyprland.workspaces.values)
@@ -883,23 +821,7 @@ Item {
     } catch (e) {
       list = []
     }
-    var i
-    for (i = 0; i < list.length; i++) {
-      var ws = list[i]
-      if (!ws || !root.isPagerWorkspace(root.workspaceName(ws), ws.id))
-        continue
-      var id = Number(ws.id)
-      if (!(id > 0) || root.blockOf(id) !== block)
-        continue
-      var slot = root.slotOf(id)
-      if (slot > highest)
-        highest = slot
-    }
-    if (highest > slots)
-      highest = slots
-    var names = []
-    for (i = 1; i <= highest; i++)
-      names.push(String(base + i))
+    var names = Labels.pageNamesFor(root.currentBlock(), root.workspaceSlots, list)
     root.pageNames = names
     if (root.workspacePage && names.indexOf(root.workspacePage) < 0)
       root.workspacePage = ""
@@ -1320,12 +1242,56 @@ Item {
       "hyprctl", "dispatch",
       "hl.dsp.window.move({ workspace = \"" + id + "\", follow = true, window = \"address:" + address + "\" })"
     ])
+    // The toplevel list still has the old workstation until movewindowv2.
+    // All reads allWindows, so point the card at the new id now. The event
+    // confirms it. A refresh here would put the old number back.
+    root.rebuildPages()
     root.workspacePage = String(id)
     root.selectedAddress = address
     root.selectionPinned = true
-    root.rebuildPages()
-    root.applyFilter()
+    var status = root.noteWindowMovedParts([address, String(id), String(id)])
+    // Already on that workstation: the card did not change, but the page did.
+    if (status !== "updated")
+      root.applyFilter()
+  }
+
+  function moveEventParts(event) {
+    var parts = []
+    try {
+      if (event && event.parse)
+        parts = event.parse(3)
+    } catch (e) {
+      parts = []
+    }
+    if (parts && parts.length)
+      return parts
+    return String((event && event.data) || "").split(",")
+  }
+
+  // A window changed workstations. Update that one card from the event so
+  // All shows the new number without closing the grid. The in-process
+  // toplevel snapshot is often still the previous workstation.
+  function noteWindowMoved(event) {
+    root.noteWindowMovedParts(root.moveEventParts(event))
+  }
+
+  function noteWindowMovedParts(parts) {
+    var address = root.hexAddress(parts && parts.length ? parts[0] : "")
+    var id = Labels.movedWorkspaceId(parts)
+    var result = Labels.retargetWindow(root.allWindows, address, id)
+    if (result.status === "updated") {
+      root.allWindows = result.rows
+      if (root.pointerHold) {
+        root.deferredRefresh = true
+        return result.status
+      }
+      root.applyFilter()
+      return result.status
+    }
+    if (result.status === "same")
+      return result.status
     root.refresh()
+    return result.status
   }
 
   function handleCustom(token) {
@@ -1523,8 +1489,10 @@ Item {
           root.priorAddress = ""
         if (root.opened)
           root.refresh()
-      } else if (root.opened && (name === "openwindow" || name === "windowtitle" || name === "movewindow"))
+      } else if (root.opened && (name === "openwindow" || name === "windowtitle" || name === "windowtitlev2"))
         root.refresh()
+      else if (root.opened && (name === "movewindow" || name === "movewindowv2"))
+        root.noteWindowMoved(event)
       else if (root.opened && (name === "createworkspace" || name === "destroyworkspace"))
         root.rebuildPages()
     }
@@ -2013,6 +1981,9 @@ Item {
                     root.beginPointer(index, cardAddress)
                     root.closeAddress(cardAddress)
                     root.endPointerHold()
+                    // Closing is not a focus. Leave the address clear so a later
+                    // release cannot activate the window that was just closed.
+                    root.pressedAddress = ""
                   }
                 }
               }

@@ -268,4 +268,7 @@ if grep -q "no_warps = true" "$log"; then
   fail "stale arm turned no_warps back on"
 fi
 
+node tests/workspace-label.test.mjs
+bash tests/list-windows.sh
+
 echo "validate: all checks passed"

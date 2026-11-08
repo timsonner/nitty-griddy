@@ -87,7 +87,7 @@ Three fingers. The grid opens on All: every window, including ones on a special 
 | Escape | Passes through to the focused app | Dismisses the grid. The compositor bind runs before an input method, so this still works while fcitx5 is running |
 | Super+W | Closes the focused window | Closes the selected card. The grid stays if other windows remain. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not close the window behind the grid |
 | Super+Q | Closes the focused window. The snippet does not change this chord | Still closes the focused window, not the card |
-| Super+Shift+1 through Super+Shift+9, and Super+Shift+0 | Moves the focused window to that workspace. 0 is workspace 10, same as the bar | Moves the selected card there and follows it. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not move the window behind the grid |
+| Super+Shift+1 through Super+Shift+9, and Super+Shift+0 | Moves the focused window to that workspace. 0 is workspace 10, same as the bar | Moves the selected card there and follows it. All updates that card's workstation number while the grid stays open. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not move the window behind the grid |
 | Arrow keys | Unchanged | Move the selection |
 | Enter | Unchanged | Focuses the selected window and dismisses the grid. The pointer stays where it is |
 | Type, Backspace | Unchanged | Filters by title, app, or workspace. A letter does not close a window |
@@ -141,7 +141,7 @@ hyprctl dispatch 'hl.dsp.event("timsonner.nitty-griddy:workspace-next")'
 omarchy plugin validate ~/.config/omarchy/plugins/timsonner.nitty-griddy
 ```
 
-In a checkout of this repo, `./validate` checks the manifest and the helpers without a running shell.
+In a checkout of this repo, `./validate` checks the manifest, the helpers, and the workspace-number rules without a running shell.
 
 ## Troubleshooting
 
