@@ -7,7 +7,7 @@ Window grid overview for Omarchy. It shows every open window on the focused scre
 Enabling the plugin installs the overlay. It does not change your Hyprland swipes or keys.
 
 - The grid opens on the focused screen, on All, and lists open windows. Live thumbnails appear when Hyprland can export them.
-- The strip keeps this monitor's workspaces 1 through 5 even when empty. It grows through the highest workspace that exists, up to 10, and keeps the empty numbers in between.
+- The strip keeps this monitor's workspaces 1 through 9 even when empty. Slot 10 is added when that workspace exists. A card shows that same number, so a window Hyprland numbers 14 reads as workspace 4.
 - Click a card to focus that window. Click the × to close it. Click the empty backdrop to dismiss the grid.
 - Arrow keys move the selection. Enter focuses the selected window. Typing filters by title, app, or workspace.
 - Middle-click and Shift+Q do not close a card. Super+Q is not changed. It still closes the focused window, including while the grid is open.
@@ -74,7 +74,7 @@ Three fingers. The grid opens on All: every window, including ones on a special 
 |---|---|---|
 | Up | Opens the grid | Opens the grid. It does not toggle closed |
 | Down | Does nothing. It does not open the menu or a console | Dismisses the grid. Focus returns to the window that was focused, if it is still open. A quake console that was showing comes back |
-| Right | Next workspace, including an empty one | Next page. All, then this monitor's workspaces. 1 through 5 stay even when empty. The row grows when a higher workspace exists, and empty numbers in between stay. The desktop workspace stays put |
+| Right | Next workspace, including an empty one | Next page. All, then this monitor's workspaces. 1 through 9 stay even when empty. Slot 10 is added when that workspace exists. The desktop workspace stays put |
 | Left | Previous workspace, including an empty one | Previous page, back toward All. The desktop workspace stays put |
 
 `hl.dsp.event` posts `custom>>timsonner.nitty-griddy:open` or `custom>>timsonner.nitty-griddy:close` on Hyprland’s socket2. The overlay is `keepLoaded`, so the shell mounts it at startup and it hears those events.

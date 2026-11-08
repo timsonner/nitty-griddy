@@ -35,9 +35,9 @@ Item {
   property real reveal: 0.96
   property string filterText: ""
   // Empty means every workspace. Otherwise the Hyprland workspace id.
-  // The strip shows All, then this monitor's numbers. 1 through 5 stay even
-  // when empty. The row grows through workspaceSlots as higher ones exist,
-  // and a workspace visiting from another monitor is added after those.
+  // The strip shows All, then this monitor's numbers. 1 through 9 stay even
+  // when empty. Slot 10 is added when that workspace exists. The label is the
+  // slot on this monitor, so Hyprland id 14 reads as workspace 4.
   property string workspacePage: ""
   property var pageNames: []
   readonly property int workspaceSlots: 10
@@ -761,15 +761,22 @@ Item {
     return (Number(id) - 1) % root.workspaceSlots + 1
   }
 
-  // 1 through 9, and 10 for the key Super+Shift+0. A visiting workspace
-  // keeps its Hyprland id so it is not mistaken for this monitor's slot.
+  // The number Super+N and the bar use. Hyprland's id is the monitor block
+  // times 10, plus this slot, so 14 is workspace 4 on the second monitor.
   function pageLabel(id) {
     var n = Number(id)
     if (!(n > 0))
       return ""
-    if (root.blockOf(n) !== root.currentBlock())
-      return String(n)
     return String(root.slotOf(n))
+  }
+
+  function rowWorkspaceLabel(row) {
+    if (!row)
+      return ""
+    var n = Number(row.workspaceId || 0)
+    if (n > 0)
+      return root.pageLabel(n)
+    return String(row.workspace || "")
   }
 
   function workspaceIdForSlot(slot) {
@@ -780,15 +787,14 @@ Item {
   }
 
   // All is page 0 and is not stored here. Entries are Hyprland workspace ids.
-  // Slots 1-5 of this monitor are always present. The row then grows through the
-  // highest slot that exists, filling the empty numbers in between.
+  // Slots 1-9 of this monitor are always present. Slot 10 is added when it
+  // exists. Workspaces pinned under another block's ids are not listed again,
+  // or the row would read 1-9 and then 1-3.
   function rebuildPages() {
     var block = root.currentBlock()
     var slots = root.workspaceSlots
     var base = block * slots
-    var highest = 5
-    var guests = []
-    var seenGuest = {}
+    var highest = 9
     var list = []
     try {
       if (Hyprland.workspaces && Hyprland.workspaces.values)
@@ -796,33 +802,23 @@ Item {
     } catch (e) {
       list = []
     }
-    var mon = root.gridMonitor()
-    var monitorName = mon ? String(mon.name || "") : ""
     var i
     for (i = 0; i < list.length; i++) {
       var ws = list[i]
       if (!ws || !root.isPagerWorkspace(root.workspaceName(ws), ws.id))
         continue
       var id = Number(ws.id)
-      if (!(id > 0))
+      if (!(id > 0) || root.blockOf(id) !== block)
         continue
-      if (root.blockOf(id) === block) {
-        var slot = root.slotOf(id)
-        if (slot > highest)
-          highest = slot
-      } else if (ws.monitor && String(ws.monitor.name || "") === monitorName && !seenGuest[id]) {
-        seenGuest[id] = true
-        guests.push(id)
-      }
+      var slot = root.slotOf(id)
+      if (slot > highest)
+        highest = slot
     }
     if (highest > slots)
       highest = slots
     var names = []
     for (i = 1; i <= highest; i++)
       names.push(String(base + i))
-    guests.sort(function(a, b) { return a - b })
-    for (i = 0; i < guests.length; i++)
-      names.push(String(guests[i]))
     root.pageNames = names
     if (root.workspacePage && names.indexOf(root.workspacePage) < 0)
       root.workspacePage = ""
@@ -997,7 +993,7 @@ Item {
           continue
         }
       }
-      var hay = (row.title + " " + row.app + " " + row.appLabel + " " + row.workspace).toLowerCase()
+      var hay = (row.title + " " + row.app + " " + row.appLabel + " " + root.rowWorkspaceLabel(row)).toLowerCase()
       if (!needle || hay.indexOf(needle) !== -1)
         out.push(row)
     }
@@ -1804,8 +1800,9 @@ Item {
                       if (!row)
                         return ""
                       var title = String(row.title || "")
-                      if (row.workspace)
-                        return title + "  ·  " + row.workspace
+                      var workspace = root.rowWorkspaceLabel(row)
+                      if (workspace)
+                        return title + "  ·  " + workspace
                       return title
                     }
                     color: root.foreground

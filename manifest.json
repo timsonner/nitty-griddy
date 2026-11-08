@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "Tim Sonner",
   "license": "MIT",
-  "description": "Window grid for Omarchy. The overlay lists windows on the focused screen and keeps workspace numbers 1-5 even when empty. Swipes and Super+W / Super+Shift+number come from snippets you copy into Hyprland: three-finger up opens the grid and down dismisses it. Left and right switch workspaces when the grid is closed, and page the strip when it is open. Super+W closes the selected card. Super+Shift+number moves it.",
+  "description": "Window grid for Omarchy. The overlay lists windows on the focused screen and keeps workspace numbers 1-9 even when empty. Swipes and Super+W / Super+Shift+number come from snippets you copy into Hyprland: three-finger up opens the grid and down dismisses it. Left and right switch workspaces when the grid is closed, and page the strip when it is open. Super+W closes the selected card. Super+Shift+number moves it.",
   "kinds": ["overlay"],
   "keepLoaded": true,
   "entryPoints": {
