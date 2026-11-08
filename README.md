@@ -7,8 +7,9 @@ Window grid overview for Omarchy. It shows every open window on the focused scre
 Enabling the plugin installs the overlay. It does not change your Hyprland swipes or keys.
 
 - The grid opens on the focused screen, on All, and lists open windows. Live thumbnails appear when Hyprland can export them.
-- The strip keeps this monitor's workspaces 1 through 9 even when empty. Slot 10 is added when that workspace exists. A card shows that same number, so a window Hyprland numbers 14 reads as workspace 4.
-- Click a card to focus that window. Click the × to close it. Click the empty backdrop to dismiss the grid.
+- The strip keeps this monitor's workspaces 1 through 9 even when empty. Slot 10 is added when that workspace exists. A card shows that same number, so a window Hyprland numbers 14 reads as workspace 4. The number stays at the right edge when the title is long. Clicking a number in the strip shows that page. Clicking the number on a card does the same when that window is on this screen. The desktop workspace stays put.
+- A window on a special workspace, such as the quake console, shows the workstation of the monitor it is on. That console can be summoned on more than one workstation, so it does not get an id of its own. A Grok session in a terminal or in that console is labeled grok.
+- Click a card to focus that window. The window is chosen when the press starts and focused when the click is released, so the click cannot land on the desktop and a pointer warp cannot switch cards. Click the × to close it. Click the empty backdrop to dismiss the grid. The backdrop waits for the release too.
 - Arrow keys move the selection. Enter focuses the selected window. Typing filters by title, app, or workspace.
 - Middle-click and Shift+Q do not close a card. Super+Q is not changed. It still closes the focused window, including while the grid is open.
 - While the grid is open the pointer stays where it is, and a visible quake console is hidden. Dismissing the grid brings that console back.
@@ -64,7 +65,7 @@ hyprctl reload
 omarchy restart shell
 ```
 
-`hyprctl reload` picks up the gestures and the keys. `omarchy restart shell` mounts the overlay. Later QML edits hot-reload when you save the plugin. A gesture or key change still needs `hyprctl reload`.
+`hyprctl reload` picks up the gestures and the keys. `omarchy restart shell` mounts the overlay. This overlay stays loaded, so a change to its QML needs another `omarchy restart shell` before the grid shows it. Saving the file alone can leave the previous grid on screen. A gesture or key change still needs `hyprctl reload`.
 
 ### Trackpad
 
@@ -97,13 +98,16 @@ The plugin does not bind Super+A. Omarchy uses that chord for Select all. Open t
 
 | Action | Result |
 |---|---|
-| Click a card | Focuses that window and dismisses the grid. The previously focused window is not restored. The pointer stays where it is |
+| Click a card | Focuses that window and dismisses the grid when the click is released. The window is chosen when the press starts, so a pointer warp cannot switch cards. The previously focused window is not restored. The pointer stays where it is |
+| Click a number in the strip, or All | Shows that page, the same as a left or right swipe. The desktop workspace stays put. The click does not reach the window behind the grid |
+| Click the number on a card | Shows that workstation's page when the window is on this screen. A window on another screen keeps its own number, and the click stays on the grid |
+| Click the grid title, or a gap between strip numbers | Stays on the current page. The click does not reach the window behind the grid |
 | × on a card | Closes that window. The grid stays if others remain |
-| Click the empty backdrop | Dismisses the grid, same as swipe down or Escape |
+| Click the empty backdrop | Dismisses the grid when the click is released, same as swipe down or Escape. The press cannot land on the window behind the grid |
 
 Middle-click and Shift+Q do not close a card.
 
-The hint along the bottom reads: Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Swipe for workspace. The strip under the title shows All, then each workspace. The current page is the accent color. The grid is on the focused screen. Thumbnails are live while the grid is open. Until a frame arrives, the card shows the app and the title. Window titles are plain text.
+The hint along the bottom reads: Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Click or swipe for workspace. The strip under the title shows All, then each workspace. The current page is the accent color. The grid is on the focused screen. Thumbnails are live while the grid is open. Until a frame arrives, the card shows the app and the title. Window titles are plain text.
 
 ## IPC
 

@@ -668,7 +668,7 @@ Item {
     return "0x" + text.toLowerCase()
   }
 
-  function prettyApp(app) {
+  function prettyApp(app, title) {
     var text = String(app || "")
     var slash = text.lastIndexOf("/")
     if (slash >= 0)
@@ -676,7 +676,15 @@ Item {
     var dot = text.lastIndexOf(".")
     if (dot >= 0 && dot < text.length - 1)
       text = text.slice(dot + 1)
-    return text || "Window"
+    var label = text || "Window"
+    // Grok Build's window class is the terminal it runs in (foot), and the
+    // quake console's class is org.omarchy.agent. A grok title should not
+    // read as a plain terminal.
+    var kind = label.toLowerCase()
+    var titled = String(title || "").toLowerCase()
+    if (titled.indexOf("grok") !== -1 && (kind === "foot" || kind === "agent" || kind === "kitty" || kind === "alacritty" || kind === "ghostty" || kind === "wezterm"))
+      return "grok"
+    return label
   }
 
   // fcitx classic UI maps an XWayland surface while the shell holds keyboard
@@ -770,13 +778,86 @@ Item {
     return String(root.slotOf(n))
   }
 
-  function rowWorkspaceLabel(row) {
+  // The workstation the monitor is showing. A special workspace such as the
+  // quake console is not itself a workstation: it can be summoned over any of
+  // them, so the card uses this id instead of the special name.
+  function monitorActiveId(monitor) {
+    if (!monitor)
+      return 0
+    var active = monitor.activeWorkspace
+    if (active && Number(active.id) > 0)
+      return Number(active.id)
+    var ipc = monitor.lastIpcObject || {}
+    var aws = ipc.activeWorkspace || null
+    if (aws && Number(aws.id) > 0)
+      return Number(aws.id)
+    return 0
+  }
+
+  function monitorByIpcId(id) {
+    var want = Number(id)
+    if (isNaN(want))
+      return null
+    var list = []
+    try {
+      if (Hyprland.monitors && Hyprland.monitors.values)
+        list = Hyprland.monitors.values
+    } catch (e) {
+      return null
+    }
+    var i
+    for (i = 0; i < list.length; i++) {
+      if (list[i] && Number(list[i].id) === want)
+        return list[i]
+    }
+    return null
+  }
+
+  function monitorWorkspaceIdFrom(workspace, monitor, ipc) {
+    var mon = monitor || (workspace && workspace.monitor) || null
+    var id = root.monitorActiveId(mon)
+    if (id > 0)
+      return id
+    if (!ipc || ipc.monitor === undefined || ipc.monitor === null || String(ipc.monitor) === "")
+      return 0
+    return root.monitorActiveId(root.monitorByIpcId(ipc.monitor))
+  }
+
+  // Positive Hyprland ids are real workstations. Special ids are not, so use
+  // the monitor's current workstation. Never surface "special:qconsole".
+  function displayWorkspaceId(row) {
     if (!row)
-      return ""
-    var n = Number(row.workspaceId || 0)
+      return 0
+    var n = Number(row.workspaceId)
+    if (n > 0)
+      return n
+    var mon = Number(row.monitorWorkspaceId)
+    if (mon > 0)
+      return mon
+    if (String(row.workspace || "").indexOf("special:") === 0)
+      return 0
+    var named = Number(row.workspace)
+    if (named > 0)
+      return named
+    return 0
+  }
+
+  function rowWorkspaceLabel(row) {
+    var n = root.displayWorkspaceId(row)
     if (n > 0)
       return root.pageLabel(n)
-    return String(row.workspace || "")
+    return ""
+  }
+
+  // Hyprland id of a strip page, or empty when that workstation is not on this monitor.
+  function pageForWorkspaceId(id) {
+    var n = Number(id)
+    if (!(n > 0))
+      return ""
+    var key = String(n)
+    if ((root.pageNames || []).indexOf(key) < 0)
+      return ""
+    return key
   }
 
   function workspaceIdForSlot(slot) {
@@ -824,6 +905,21 @@ Item {
       root.workspacePage = ""
   }
 
+  // Filter the grid to one page. The desktop workspace stays put.
+  function showWorkspacePage(page) {
+    if (!root.opened || root.hiding || root.pointerHold)
+      return
+    page = page ? String(page) : ""
+    if (page === root.workspacePage)
+      return
+    root.workspacePage = page
+    root.selectedAddress = ""
+    root.selectedIndex = -1
+    root.selectionPinned = false
+    root.applyFilter()
+    scroller.contentY = 0
+  }
+
   // delta -1 is toward All (left). delta +1 walks 1, 2, 3, … (right).
   function stepWorkspace(delta) {
     if (!root.opened || root.hiding || root.pointerHold || !delta)
@@ -841,14 +937,7 @@ Item {
     if (next > names.length)
       next = names.length
     var page = next === 0 ? "" : String(names[next - 1] || "")
-    if (page === root.workspacePage)
-      return
-    root.workspacePage = page
-    root.selectedAddress = ""
-    root.selectedIndex = -1
-    root.selectionPinned = false
-    root.applyFilter()
-    scroller.contentY = 0
+    root.showWorkspacePage(page)
   }
 
   function pushRow(rows, seen, map, row, wayland) {
@@ -885,13 +974,17 @@ Item {
         var ws = root.workspaceName(item.workspace)
         if (!ws && ipc.workspace)
           ws = String(ipc.workspace.name || ipc.workspace.id || "")
+        var wsId = item.workspace && item.workspace.id !== undefined ? Number(item.workspace.id) : 0
+        if (!(wsId > 0) && !(wsId < 0) && ipc.workspace && ipc.workspace.id !== undefined)
+          wsId = Number(ipc.workspace.id)
         root.pushRow(rows, seen, map, {
           address: root.hexAddress(item.address),
           title: title || root.prettyApp(app),
           app: app,
-          appLabel: root.prettyApp(app),
+          appLabel: root.prettyApp(app, title),
           workspace: ws,
-          workspaceId: item.workspace && item.workspace.id !== undefined ? Number(item.workspace.id) : 0,
+          workspaceId: wsId,
+          monitorWorkspaceId: root.monitorWorkspaceIdFrom(item.workspace, item.monitor, ipc),
           activated: !!item.activated
         }, wayland)
       } else {
@@ -923,13 +1016,14 @@ Item {
     var title = String(top.title || "")
     var address = ""
     var ws = ""
+    var ipc = {}
     var activated = !!top.activated
     if (attached) {
       address = root.hexAddress(attached.address)
       if (!title)
         title = String(attached.title || "")
       ws = root.workspaceName(attached.workspace)
-      var ipc = attached.lastIpcObject || {}
+      ipc = attached.lastIpcObject || {}
       if (!app)
         app = String(ipc.class || ipc.initialClass || "")
       if (!ws && ipc.workspace)
@@ -937,13 +1031,17 @@ Item {
       if (attached.activated !== undefined)
         activated = !!attached.activated
     }
+    var wsId = attached && attached.workspace && attached.workspace.id !== undefined ? Number(attached.workspace.id) : 0
+    if (!(wsId > 0) && !(wsId < 0) && ipc && ipc.workspace && ipc.workspace.id !== undefined)
+      wsId = Number(ipc.workspace.id)
     root.pushRow(rows, seen, map, {
       address: address,
       title: title || root.prettyApp(app),
       app: app,
-      appLabel: root.prettyApp(app),
+      appLabel: root.prettyApp(app, title),
       workspace: ws,
-      workspaceId: attached && attached.workspace && attached.workspace.id !== undefined ? Number(attached.workspace.id) : 0,
+      workspaceId: wsId,
+      monitorWorkspaceId: root.monitorWorkspaceIdFrom(attached ? attached.workspace : null, attached ? attached.monitor : null, ipc),
       activated: activated
     }, top)
   }
@@ -985,13 +1083,8 @@ Item {
       var row = root.allWindows[i]
       if (root.workspacePage) {
         var pageId = Number(root.workspacePage)
-        var rowId = Number(row.workspaceId || 0)
-        if (rowId > 0) {
-          if (rowId !== pageId)
-            continue
-        } else if (String(row.workspace || "") !== root.workspacePage && String(row.workspace || "") !== root.pageLabel(root.workspacePage)) {
+        if (root.displayWorkspaceId(row) !== pageId)
           continue
-        }
       }
       var hay = (row.title + " " + row.app + " " + row.appLabel + " " + root.rowWorkspaceLabel(row)).toLowerCase()
       if (!needle || hay.indexOf(needle) !== -1)
@@ -1128,6 +1221,19 @@ Item {
     }
     root.applyFilter()
     root.reclaimFocus()
+  }
+
+  // The address was chosen on press. Focus and dismiss happen on release so a
+  // warp cannot retarget the card, and the click cannot land on the desktop
+  // while the grid is already gone.
+  function finishCardPress() {
+    if (!root.pointerHold && !root.pressedAddress)
+      return
+    var cardAddress = String(root.pressedAddress || "")
+    root.pressedAddress = ""
+    root.endPointerHold()
+    if (cardAddress)
+      root.activateAddress(cardAddress)
   }
 
   function activateAddress(address) {
@@ -1268,9 +1374,10 @@ Item {
         address: address,
         title: title || root.prettyApp(app),
         app: app,
-        appLabel: root.prettyApp(app),
+        appLabel: root.prettyApp(app, title),
         workspace: String((row && row.workspace) || ""),
         workspaceId: Number((row && row.workspaceId) || 0),
+        monitorWorkspaceId: Number((row && row.monitorWorkspaceId) || 0),
         activated: false
       })
     } catch (e) {
@@ -1570,9 +1677,16 @@ Item {
         z: 1
         anchors.fill: parent
         preventStealing: true
+        // Take the press, and dismiss on release. Closing on press unmapped the
+        // grid while the button was still down, so the click landed on the
+        // window behind it.
         onPressed: function(mouse) {
           mouse.accepted = true
-          root.dismiss()
+        }
+        onReleased: function(mouse) {
+          mouse.accepted = true
+          if (containsMouse)
+            root.dismiss()
         }
       }
 
@@ -1584,6 +1698,17 @@ Item {
         anchors.margins: root.pad
         height: Style.space(92)
         z: 3
+
+        // Title and subtitle are plain text. This catcher stops above the
+        // strip so it cannot take a workstation number's press.
+        MouseArea {
+          anchors.top: parent.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.bottom: pageStrip.top
+          preventStealing: true
+          onPressed: function(mouse) { mouse.accepted = true }
+        }
 
         Text {
           id: titleLabel
@@ -1625,6 +1750,7 @@ Item {
 
         Flickable {
           id: pageStrip
+          z: 2
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.bottom: parent.bottom
@@ -1636,25 +1762,48 @@ Item {
           interactive: contentWidth > width + 1
           clip: true
 
+          // Gaps between the numbers. A miss here used to reach the backdrop.
+          MouseArea {
+            z: 0
+            width: Math.max(pageStrip.width, pageRow.width)
+            height: pageStrip.height
+            preventStealing: true
+            onPressed: function(mouse) { mouse.accepted = true }
+          }
+
           Row {
             id: pageRow
-            spacing: Style.space(16)
+            z: 1
+            spacing: Style.space(8)
             height: pageStrip.height
 
             Repeater {
               model: 1 + root.pageNames.length
-              delegate: Text {
+              delegate: MouseArea {
                 required property int index
                 readonly property string pageId: index === 0 ? "" : String(root.pageNames[index - 1] || "")
                 readonly property bool current: pageId === root.workspacePage
-                textFormat: Text.PlainText
-                text: index === 0 ? "All" : root.pageLabel(pageId)
-                color: current ? root.accent : root.foreground
-                opacity: current ? 1 : 0.5
-                font.family: root.uiFont
-                font.pixelSize: Style.font.body
-                font.bold: current
-                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(chip.implicitWidth + Style.space(12), Style.space(28))
+                height: pageStrip.height
+                preventStealing: true
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onPressed: function(mouse) {
+                  mouse.accepted = true
+                  root.showWorkspacePage(pageId)
+                }
+
+                Text {
+                  id: chip
+                  anchors.centerIn: parent
+                  textFormat: Text.PlainText
+                  text: index === 0 ? "All" : root.pageLabel(pageId)
+                  color: current ? root.accent : root.foreground
+                  opacity: current ? 1 : 0.5
+                  font.family: root.uiFont
+                  font.pixelSize: Style.font.body
+                  font.bold: current
+                }
               }
             }
           }
@@ -1792,22 +1941,40 @@ Item {
                     font.bold: true
                   }
 
-                  Text {
+                  Item {
                     width: parent.width
-                    elide: Text.ElideRight
-                    textFormat: Text.PlainText
-                    text: {
-                      if (!row)
-                        return ""
-                      var title = String(row.title || "")
-                      var workspace = root.rowWorkspaceLabel(row)
-                      if (workspace)
-                        return title + "  ·  " + workspace
-                      return title
+                    height: Math.max(titleLine.implicitHeight, workspaceLine.implicitHeight)
+
+                    // The number stays on the right. A long title elides before it.
+                    Text {
+                      id: workspaceLine
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      width: implicitWidth
+                      horizontalAlignment: Text.AlignRight
+                      z: 1
+                      textFormat: Text.PlainText
+                      text: row ? root.rowWorkspaceLabel(row) : ""
+                      visible: text.length > 0
+                      color: root.foreground
+                      font.family: root.uiFont
+                      font.pixelSize: Style.font.body
+                      font.bold: true
                     }
-                    color: root.foreground
-                    font.family: root.uiFont
-                    font.pixelSize: Style.font.body
+
+                    Text {
+                      id: titleLine
+                      anchors.left: parent.left
+                      anchors.right: workspaceLine.visible ? workspaceLine.left : parent.right
+                      anchors.rightMargin: workspaceLine.visible ? Style.space(8) : 0
+                      anchors.verticalCenter: parent.verticalCenter
+                      elide: Text.ElideRight
+                      textFormat: Text.PlainText
+                      text: row ? String(row.title || "") : ""
+                      color: root.foreground
+                      font.family: root.uiFont
+                      font.pixelSize: Style.font.body
+                    }
                   }
                 }
               }
@@ -1850,6 +2017,30 @@ Item {
                 }
               }
 
+              // Above the card press. The number is plain text in the footer, and
+              // the card press underneath would otherwise focus that window.
+              MouseArea {
+                id: workspaceHit
+                z: 6
+                visible: workspaceLine.visible
+                enabled: workspaceLine.visible
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.rightMargin: Style.space(4)
+                anchors.bottomMargin: Style.space(4)
+                width: Math.max(Style.space(28), workspaceLine.implicitWidth + Style.space(16))
+                height: Math.max(Style.space(28), workspaceLine.implicitHeight + Style.space(12))
+                preventStealing: true
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onPressed: function(mouse) {
+                  mouse.accepted = true
+                  var page = root.pageForWorkspaceId(root.displayWorkspaceId(row))
+                  if (page)
+                    root.showWorkspacePage(page)
+                }
+              }
+
               MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton
@@ -1869,12 +2060,15 @@ Item {
                   if (!row)
                     return
                   mouse.accepted = true
-                  // Act on press. A warped release must not retarget this card.
-                  var cardAddress = String(address || "")
-                  root.beginPointer(index, cardAddress)
-                  root.activateAddress(cardAddress)
-                  root.endPointerHold()
+                  // Remember the card now. The release focuses it, so a warp
+                  // cannot choose a different one and the click stays on the grid.
+                  root.beginPointer(index, String(address || ""))
                 }
+                onReleased: function(mouse) {
+                  mouse.accepted = true
+                  root.finishCardPress()
+                }
+                onCanceled: root.finishCardPress()
               }
             }
           }
@@ -1917,7 +2111,7 @@ Item {
         opacity: 0.66
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
-        text: "Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Swipe for workspace"
+        text: "Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Click or swipe for workspace"
         z: 3
       }
 

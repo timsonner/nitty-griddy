@@ -1,24 +1,37 @@
 #!/bin/bash
 # Print mapped Hyprland clients as NDJSON, with hard bounds.
-# One JSON object per line: address, class, initialClass, title, workspace, workspaceId.
+# One JSON object per line: address, class, initialClass, title, workspace,
+# workspaceId, monitorWorkspaceId. monitorWorkspaceId is the workstation the
+# client's monitor is showing. Special workspaces are not workstations.
 set -euo pipefail
 
 # Keep a hostile or huge client list from growing inside the shell.
 # 256 MiB is enough for jq and still bounded.
 ulimit -v 262144 || true
 
-clients() {
+hypr_json() {
   if command -v timeout >/dev/null 2>&1; then
-    timeout --signal=TERM --kill-after=1 2 hyprctl -j clients
+    timeout --signal=TERM --kill-after=1 2 hyprctl -j "$1"
   else
-    hyprctl -j clients
+    hyprctl -j "$1"
   fi
 }
 
-clients | jq -c '
+monitors=$(hypr_json monitors 2>/dev/null || printf '[]')
+case $monitors in
+  \[*\]) ;;
+  *) monitors='[]' ;;
+esac
+
+hypr_json clients | jq -c --argjson monitors "$monitors" '
   def clip($n):
     if type == "string" then (gsub("[\r\n]"; " ") | .[0:$n]) else "" end;
-  limit(256;
+  def num:
+    if type == "number" then . else 0 end;
+  (($monitors // [])
+    | map(select(.id != null) | { key: (.id | tostring), value: ((.activeWorkspace.id // 0) | num) })
+    | from_entries) as $active
+  | limit(256;
     .[]
     | select(.mapped != false)
     | {
@@ -27,7 +40,8 @@ clients | jq -c '
         initialClass: (.initialClass | clip(256)),
         title: (.title | clip(512)),
         workspace: (.workspace.name | clip(128)),
-        workspaceId: (if (.workspace.id | type) == "number" then .workspace.id else 0 end)
+        workspaceId: ((.workspace.id // 0) | num),
+        monitorWorkspaceId: ($active[(.monitor | tostring)] // 0 | num)
       }
   )
 '
