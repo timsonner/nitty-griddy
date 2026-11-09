@@ -11,18 +11,19 @@ Enabling the plugin installs the overlay. It does not change your Hyprland swipe
 - A window on a special workspace, such as the quake console, shows the workstation of the monitor it is on. That console can be summoned on more than one workstation, so it does not get an id of its own. A Grok session in a terminal or in that console is labeled grok.
 - Click a card to focus that window. The window is chosen when the press starts and focused when the click is released, so the click cannot land on the desktop and a pointer warp cannot switch cards. Click the × to close it. Click the empty backdrop to dismiss the grid. The backdrop waits for the release too.
 - Arrow keys move the selection. Enter focuses the selected window. Typing filters by title, app, or workspace.
-- Middle-click and Shift+Q do not close a card. Super+Q is not changed. It still closes the focused window, including while the grid is open.
+- Middle-click and Shift+Q do not close a card. Super+Q closes the selected card while the grid is open, the same as Super+W. With the grid closed it still closes the focused window.
 - While the grid is open the pointer stays where it is, and a visible quake console is hidden. Dismissing the grid brings that console back.
 
 ## What you set up
 
-Copy `gestures.snippet.lua` and `bindings.snippet.lua` into `~/.config/hypr/`, then reload Hyprland and restart the shell. The steps are under Swipes and shortcuts. Until you do that, three-finger swipes stay as they are, and Escape, Super+W, and Super+Shift+number keep Omarchy's behavior. The grid will not see them.
+Copy `gestures.snippet.lua` and `bindings.snippet.lua` into `~/.config/hypr/`, then reload Hyprland and restart the shell. The steps are under Swipes and shortcuts. Until you do that, three-finger swipes stay as they are, and Escape, Super+W, Super+Q, Super+Tab, Super+Shift+Tab, and Super+Shift+number keep Omarchy's behavior. The grid will not see them.
 
 After the snippets are in place:
 
-- Three-finger up opens the grid. Down dismisses it. Left and right switch workspaces while the grid is closed, and page the strip while it is open. The desktop workspace stays put during that paging.
+- Three-finger up opens the grid. Down dismisses it. Left and right switch workspaces while the grid is closed, and page the strip while it is open. The desktop workspace stays put during that paging. Super+Tab and Super+Shift+Tab do the same thing as those swipes.
 - Escape dismisses the grid only while it is open.
-- Super+W closes the selected card while the grid is open, and still closes the focused window when the grid is closed.
+- Super+W and Super+Q close the selected card while the grid is open, and still close the focused window when the grid is closed.
+- The blur behind the grid follows the page. All, and a workstation with no windows, show the blurred desktop wallpaper. That picture is the desktop's current background. A video background uses the lock screen's still. A workstation with windows shows those windows, blurred, and updates when one opens or closes. The grid stays where it is.
 - Super+Shift+1 through Super+Shift+9, and Super+Shift+0 for workspace 10, move the selected card while the grid is open and follow it. With the grid closed, the same chords still move the focused window.
 
 The plugin does not bind Super+A. Omarchy uses that chord for Select all.
@@ -75,8 +76,8 @@ Three fingers. The grid opens on All: every window, including ones on a special 
 |---|---|---|
 | Up | Opens the grid | Opens the grid. It does not toggle closed |
 | Down | Does nothing. It does not open the menu or a console | Dismisses the grid. Focus returns to the window that was focused, if it is still open. A quake console that was showing comes back |
-| Right | Next workspace, including an empty one | Next page. All, then this monitor's workspaces. 1 through 9 stay even when empty. Slot 10 is added when that workspace exists. The desktop workspace stays put |
-| Left | Previous workspace, including an empty one | Previous page, back toward All. The desktop workspace stays put |
+| Right | Next workspace, including an empty one | Next page. All, then this monitor's workspaces. 1 through 9 stay even when empty. Slot 10 is added when that workspace exists. The desktop workspace stays put. The blur follows that page |
+| Left | Previous workspace, including an empty one | Previous page, back toward All. The desktop workspace stays put. The blur follows that page |
 
 `hl.dsp.event` posts `custom>>timsonner.nitty-griddy:open` or `custom>>timsonner.nitty-griddy:close` on Hyprland’s socket2. The overlay is `keepLoaded`, so the shell mounts it at startup and it hears those events.
 
@@ -85,8 +86,10 @@ Three fingers. The grid opens on All: every window, including ones on a special 
 | Key | Grid closed | Grid open |
 |---|---|---|
 | Escape | Passes through to the focused app | Dismisses the grid. The compositor bind runs before an input method, so this still works while fcitx5 is running |
-| Super+W | Closes the focused window | Closes the selected card. The grid stays if other windows remain. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not close the window behind the grid |
-| Super+Q | Closes the focused window. The snippet does not change this chord | Still closes the focused window, not the card |
+| Super+Tab | Next workspace, the same as Omarchy | Next page, the same as a three-finger swipe right. The desktop workspace stays put. All and an empty workstation show the wallpaper. A workstation with windows shows those windows |
+| Super+Shift+Tab | Previous workspace, the same as Omarchy | Previous page, the same as a three-finger swipe left. The desktop workspace stays put. All and an empty workstation show the wallpaper. A workstation with windows shows those windows |
+| Super+W | Closes the focused window | Closes the selected card. The grid stays if other windows remain. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not close the window behind the grid. The blur drops that window. The last window leaves the wallpaper |
+| Super+Q | Closes the focused window | Same as Super+W. Closes the selected card, not the window behind the grid |
 | Super+Shift+1 through Super+Shift+9, and Super+Shift+0 | Moves the focused window to that workspace. 0 is workspace 10, same as the bar | Moves the selected card there and follows it. All updates that card's workstation number while the grid stays open. Hover a card, or move to it with the arrow keys, first. With nothing selected, this does not move the window behind the grid |
 | Arrow keys | Unchanged | Move the selection |
 | Enter | Unchanged | Focuses the selected window and dismisses the grid. The pointer stays where it is |
@@ -107,7 +110,7 @@ The plugin does not bind Super+A. Omarchy uses that chord for Select all. Open t
 
 Middle-click and Shift+Q do not close a card.
 
-The hint along the bottom reads: Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Click or swipe for workspace. The strip under the title shows All, then each workspace. The current page is the accent color. The grid is on the focused screen. Thumbnails are live while the grid is open. Until a frame arrives, the card shows the app and the title. Window titles are plain text.
+The hint along the bottom reads: Type to filter · Arrow keys to move · Enter to focus · Super+W or Super+Q to close · Esc to dismiss · Super+Tab or swipe for workspace. The strip under the title shows All, then each workspace. The current page is the accent color. The grid is on the focused screen. Thumbnails are live while the grid is open. Until a frame arrives, the card shows the app and the title. Window titles are plain text. All and an empty workstation show the blurred desktop wallpaper. A workstation with windows shows those windows, blurred, and that picture updates when a window opens or closes. The cards stay on screen.
 
 ## IPC
 
@@ -133,6 +136,7 @@ hyprctl dispatch 'hl.dsp.event("timsonner.nitty-griddy:close")'
 hyprctl dispatch 'hl.dsp.event("timsonner.nitty-griddy:toggle")'
 hyprctl dispatch 'hl.dsp.event("timsonner.nitty-griddy:workspace-prev")'
 hyprctl dispatch 'hl.dsp.event("timsonner.nitty-griddy:workspace-next")'
+hyprctl dispatch 'hl.dsp.event("timsonner.nitty-griddy:close-selected")'
 ```
 
 ## Validate
@@ -164,7 +168,7 @@ hl.dispatch(hl.dsp.exec_cmd("omarchy-shell shell hide timsonner.nitty-griddy"))
 
 ## Uninstall
 
-Remove the NittyGriddy gestures from `~/.config/hypr/gestures.lua`, and remove `require("hypr.gestures")` if this plugin was the only reason it was there. In `~/.config/hypr/bindings.lua`, remove the Escape dismiss bind, the Super+W rebind, and the Super+Shift+number rebinds. Deleting that rebind gives Super+W back to Omarchy’s close-window bind. Then:
+Remove the NittyGriddy gestures from `~/.config/hypr/gestures.lua`, and remove `require("hypr.gestures")` if this plugin was the only reason it was there. In `~/.config/hypr/bindings.lua`, remove the Escape dismiss bind, the Super+W and Super+Q rebinds, the Super+Tab and Super+Shift+Tab rebinds, and the Super+Shift+number rebinds. Deleting those rebinds gives the keys back to Omarchy. Then:
 
 ```sh
 omarchy plugin remove timsonner.nitty-griddy --yes

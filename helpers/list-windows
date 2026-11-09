@@ -29,11 +29,19 @@ hypr_json clients | jq -c --argjson monitors "$monitors" '
   def num:
     if type == "number" then . else 0 end;
   (($monitors // [])
-    | map(select(.id != null) | { key: (.id | tostring), value: ((.activeWorkspace.id // 0) | num) })
-    | from_entries) as $active
+    | map(select(.id != null) | {
+        key: (.id | tostring),
+        value: {
+          active: ((.activeWorkspace.id // 0) | num),
+          x: (.x // 0 | num),
+          y: (.y // 0 | num)
+        }
+      })
+    | from_entries) as $screens
   | limit(256;
     .[]
     | select(.mapped != false)
+    | ($screens[(.monitor | tostring)] // { active: 0, x: 0, y: 0 }) as $screen
     | {
         address: (.address | clip(34)),
         class: (.class | clip(256)),
@@ -41,7 +49,12 @@ hypr_json clients | jq -c --argjson monitors "$monitors" '
         title: (.title | clip(512)),
         workspace: (.workspace.name | clip(128)),
         workspaceId: ((.workspace.id // 0) | num),
-        monitorWorkspaceId: ($active[(.monitor | tostring)] // 0 | num)
+        monitorWorkspaceId: ($screen.active | num),
+        monitorId: ((.monitor // -1) | num),
+        bx: (((.at[0] // 0) | num) - ($screen.x | num)),
+        by: (((.at[1] // 0) | num) - ($screen.y | num)),
+        bw: ((.size[0] // 0) | num),
+        bh: ((.size[1] // 0) | num)
       }
   )
 '

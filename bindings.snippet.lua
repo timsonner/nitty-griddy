@@ -3,7 +3,8 @@
 -- Drop this into ~/.config/hypr/bindings.lua (that file is already loaded).
 -- Do not bind SUPER + A. Omarchy uses it for Select all.
 -- Three-finger swipe up opens the grid and swipe down closes it.
--- These binds are Escape, and Super+W while the grid is open.
+-- These binds are Escape, Super+W, Super+Q, Super+Tab, and Super+Shift+Tab
+-- while the grid is open.
 
 -- fcitx5's input-method grab sits in front of the overlay, so the grid never
 -- sees Escape. Hyprland runs this bind first. Consume the key only while the
@@ -24,9 +25,9 @@ end
 o.bind_commands[dismiss_nitty_griddy] = "omarchy-shell shell hide timsonner.nitty-griddy"
 o.bind("ESCAPE", "NittyGriddy dismiss", dismiss_nitty_griddy, { auto_consuming = true })
 
--- Super+W closes the focused window on the desktop. While the grid is open
--- the same chord closes the selected card instead, and does not close the
--- window behind the grid. Super+Q keeps the desktop close.
+-- Super+W and Super+Q close the focused window on the desktop. While the
+-- grid is open the same chords close the selected card instead, and do not
+-- close the window behind the grid.
 local function close_nitty_or_window()
   if nitty_griddy_mapped() then
     hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:close-selected"))
@@ -37,6 +38,31 @@ end
 
 o.bind_commands[close_nitty_or_window] = "hl.dsp.window.close()"
 o.rebind("SUPER + W", "Close window", close_nitty_or_window)
+o.rebind("SUPER + Q", "Close window", close_nitty_or_window)
+
+-- Super+Tab and Super+Shift+Tab are Omarchy's next and previous workspace.
+-- While the grid is open they page the strip, the same as a three-finger
+-- swipe, and the desktop workspace stays put.
+local function nitty_or_next_workspace()
+  if nitty_griddy_mapped() then
+    hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:workspace-next"))
+    return
+  end
+  hl.dispatch(hl.dsp.focus({ workspace = "m+1" }))
+end
+
+local function nitty_or_previous_workspace()
+  if nitty_griddy_mapped() then
+    hl.dispatch(hl.dsp.event("timsonner.nitty-griddy:workspace-prev"))
+    return
+  end
+  hl.dispatch(hl.dsp.focus({ workspace = "m-1" }))
+end
+
+o.bind_commands[nitty_or_next_workspace] = 'hl.dsp.focus({ workspace = "m+1" })'
+o.bind_commands[nitty_or_previous_workspace] = 'hl.dsp.focus({ workspace = "m-1" })'
+o.rebind("SUPER + TAB", "Next workspace", nitty_or_next_workspace)
+o.rebind("SUPER + SHIFT + TAB", "Previous workspace", nitty_or_previous_workspace)
 
 -- Super+Shift+1 through 9, and Super+Shift+0 for workspace 10, move the
 -- focused window. While the grid is open the same chords move the selected

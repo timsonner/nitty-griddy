@@ -67,6 +67,26 @@ Item {
   property bool restoreOnBlur: false
   property bool blurAgain: false
   property int blurToken: 0
+  // Two layers so a workspace change can fade one blurred picture into the
+  // next. The grid itself stays put. All, and a workstation with no windows,
+  // leave both layers clear so the blurred wallpaper shows. A workstation
+  // with windows shows those windows, and opening or closing one updates it.
+  property var backdropFront: []
+  property var backdropBack: []
+  property bool backdropShowFront: true
+  property bool backdropWindows: false
+  property bool backdropReady: false
+  property bool backdropInstant: false
+  property string backdropShownKey: ""
+  property string wallpaperPath: ""
+  property int wallpaperGen: 0
+  property bool wallpaperAgain: false
+  property bool posterAgain: false
+  property string posterPending: ""
+  property int posterToken: 0
+  readonly property string wallpaperStateHome: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
+  readonly property string wallpaperLink: wallpaperStateHome + "/omarchy/current/background"
+  readonly property string themeBackgrounds: wallpaperStateHome + "/omarchy/current/theme/backgrounds"
   // Pressed card, copied at press time so a hover or a refresh cannot retarget the click.
   property bool pointerHold: false
   property int heldIndex: -1
@@ -155,6 +175,13 @@ Item {
     root.heldAddress = ""
     root.pressedAddress = ""
     root.deferredRefresh = false
+    root.backdropReady = false
+    root.backdropShownKey = ""
+    root.backdropFront = []
+    root.backdropBack = []
+    root.backdropShowFront = true
+    root.backdropWindows = false
+    root.resolveWallpaper()
     root.hoverIgnoreUntil = 0
     root.hiding = false
     root.scrollerInteractive = false
@@ -624,11 +651,11 @@ Item {
   }
 
   function captureBackdrop() {
-    // Grab the desktop while the shell is still holding this surface at
-    // opacity 0 (waiting for HiDPI scale). A later frame would include the grid.
-    if (!root.opened || !panel.screen || panel.contentRevealed)
+    // The blurred picture is built from the workspace's own windows, so it
+    // does not need a shot of the screen. That shot would include the grid.
+    if (!root.opened || root.hiding)
       return
-    shot.captureFrame()
+    root.syncBackdrop()
   }
 
   function helper(name) {
@@ -785,6 +812,150 @@ Item {
     return null
   }
 
+  function monitorIdOf(monitor, ipc) {
+    if (monitor && monitor.id !== undefined && monitor.id !== null && String(monitor.id) !== "")
+      return Number(monitor.id)
+    if (ipc && ipc.monitor !== undefined && ipc.monitor !== null && String(ipc.monitor) !== "")
+      return Number(ipc.monitor)
+    return -1
+  }
+
+  // Hyprland layout pixels relative to the monitor. The overlay maps these
+  // onto the screen it is covering.
+  function windowBox(ipc, monitor) {
+    var at = (ipc && ipc.at) || []
+    var size = (ipc && ipc.size) || []
+    var mx = monitor && monitor.x !== undefined ? Number(monitor.x) : 0
+    var my = monitor && monitor.y !== undefined ? Number(monitor.y) : 0
+    return {
+      monitorId: root.monitorIdOf(monitor, ipc),
+      bx: Number(at[0] || 0) - mx,
+      by: Number(at[1] || 0) - my,
+      bw: Number(size[0] || 0),
+      bh: Number(size[1] || 0)
+    }
+  }
+
+  function panelMonitor() {
+    try {
+      if (panel.screen && Hyprland.monitorFor)
+        return Hyprland.monitorFor(panel.screen)
+    } catch (e) {}
+    return null
+  }
+
+  function backdropScale() {
+    var mon = root.panelMonitor()
+    var scale = mon && Number(mon.scale) > 0 ? Number(mon.scale) : 1
+    var layoutW = mon ? Number(mon.width) / scale : 0
+    var layoutH = mon ? Number(mon.height) / scale : 0
+    if (!(layoutW > 0))
+      layoutW = panel.width
+    if (!(layoutH > 0))
+      layoutH = panel.height
+    return {
+      sx: panel.width > 0 && layoutW > 0 ? panel.width / layoutW : 1,
+      sy: panel.height > 0 && layoutH > 0 ? panel.height / layoutH : 1
+    }
+  }
+
+  // The shell's current wallpaper, resolved the same way the desktop does.
+  // A video has no still of its own, so the lock screen's poster is used.
+  function resolveWallpaper() {
+    root.wallpaperGen = root.wallpaperGen + 1
+    if (wallpaperProc.running) {
+      root.wallpaperAgain = true
+      return
+    }
+    wallpaperProc.token = root.wallpaperGen
+    wallpaperProc.running = true
+  }
+
+  function takeWallpaper(path, fromPoster, token) {
+    if (token !== root.wallpaperGen)
+      return
+    path = String(path || "").trim()
+    if (!path)
+      return
+    if (!fromPoster && Util.isVideoPath(path)) {
+      root.requestPoster(path, token)
+      return
+    }
+    if (Util.isVideoPath(path))
+      return
+    if (path === root.wallpaperPath)
+      return
+    root.wallpaperPath = path
+  }
+
+  function requestPoster(path, token) {
+    if (!path)
+      return
+    if (posterProc.running) {
+      root.posterAgain = true
+      root.posterPending = path
+      root.posterToken = token
+      return
+    }
+    posterProc.token = token
+    posterProc.command = ["bash", root.posterScript(), path]
+    posterProc.running = true
+  }
+
+  function posterScript() {
+    return (Quickshell.env("OMARCHY_PATH") || "/usr/share/omarchy") + "/shell/plugins/lock/poster.sh"
+  }
+
+  function syncBackdrop() {
+    if (!root.opened || root.hiding)
+      return
+    if (panel.width < 1 || panel.height < 1)
+      return
+    var mon = root.panelMonitor()
+    var monId = mon && mon.id !== undefined ? Number(mon.id) : -1
+    var scale = root.backdropScale()
+    var page = root.workspacePage ? String(root.workspacePage) : ""
+    var rows = []
+    var windows = false
+    // All is the wallpaper only. A numbered page is the windows on it, or
+    // the wallpaper when that workstation has none.
+    if (page) {
+      rows = Labels.placeBackdrop(root.allWindows, Number(page), monId, scale.sx, scale.sy)
+      windows = rows.length > 0
+    }
+    var parts = [windows ? page : "wallpaper"]
+    var i
+    if (windows) {
+      for (i = 0; i < rows.length; i++)
+        parts.push(rows[i].address + "@" + Math.round(rows[i].px) + "x" + Math.round(rows[i].py))
+    }
+    var key = parts.join("|")
+    if (key === root.backdropShownKey && root.backdropWindows === windows)
+      return
+    root.backdropShownKey = key
+    if (!root.backdropReady) {
+      root.backdropInstant = true
+      root.backdropFront = windows ? rows : []
+      root.backdropShowFront = true
+      root.backdropWindows = windows
+      root.backdropInstant = false
+      root.backdropReady = true
+      return
+    }
+    if (!windows) {
+      root.backdropWindows = false
+      return
+    }
+    if (root.backdropShowFront) {
+      root.backdropBack = rows
+      root.backdropShowFront = false
+    } else {
+      root.backdropFront = rows
+      root.backdropShowFront = true
+    }
+    root.backdropWindows = true
+  }
+
   function monitorWorkspaceIdFrom(workspace, monitor, ipc) {
     var mon = monitor || (workspace && workspace.monitor) || null
     var id = root.monitorActiveId(mon)
@@ -899,6 +1070,7 @@ Item {
         var wsId = item.workspace && item.workspace.id !== undefined ? Number(item.workspace.id) : 0
         if (!(wsId > 0) && !(wsId < 0) && ipc.workspace && ipc.workspace.id !== undefined)
           wsId = Number(ipc.workspace.id)
+        var box = root.windowBox(ipc, item.monitor)
         root.pushRow(rows, seen, map, {
           address: root.hexAddress(item.address),
           title: title || root.prettyApp(app),
@@ -907,6 +1079,11 @@ Item {
           workspace: ws,
           workspaceId: wsId,
           monitorWorkspaceId: root.monitorWorkspaceIdFrom(item.workspace, item.monitor, ipc),
+          monitorId: box.monitorId,
+          bx: box.bx,
+          by: box.by,
+          bw: box.bw,
+          bh: box.bh,
           activated: !!item.activated
         }, wayland)
       } else {
@@ -956,6 +1133,7 @@ Item {
     var wsId = attached && attached.workspace && attached.workspace.id !== undefined ? Number(attached.workspace.id) : 0
     if (!(wsId > 0) && !(wsId < 0) && ipc && ipc.workspace && ipc.workspace.id !== undefined)
       wsId = Number(ipc.workspace.id)
+    var box = root.windowBox(ipc, attached ? attached.monitor : null)
     root.pushRow(rows, seen, map, {
       address: address,
       title: title || root.prettyApp(app),
@@ -964,6 +1142,11 @@ Item {
       workspace: ws,
       workspaceId: wsId,
       monitorWorkspaceId: root.monitorWorkspaceIdFrom(attached ? attached.workspace : null, attached ? attached.monitor : null, ipc),
+      monitorId: box.monitorId,
+      bx: box.bx,
+      by: box.by,
+      bw: box.bw,
+      bh: box.bh,
       activated: activated
     }, top)
   }
@@ -1021,6 +1204,7 @@ Item {
     root.errorText = ""
     root.thumbGeneration++
     root.armScroller()
+    root.syncBackdrop()
   }
 
   function armScroller() {
@@ -1217,8 +1401,8 @@ Item {
     root.closeAddress(root.windows[index].address)
   }
 
-  // Super+W while the grid is open. No card is selected until hover or the
-  // arrow keys, and this does not close the window behind the grid.
+  // Super+W and Super+Q while the grid is open. No card is selected until
+  // hover or the arrow keys, and this does not close the window behind the grid.
   function closeSelected() {
     if (!root.opened || root.hiding)
       return
@@ -1344,6 +1528,11 @@ Item {
         workspace: String((row && row.workspace) || ""),
         workspaceId: Number((row && row.workspaceId) || 0),
         monitorWorkspaceId: Number((row && row.monitorWorkspaceId) || 0),
+        monitorId: Number((row && row.monitorId) || -1),
+        bx: Number((row && row.bx) || 0),
+        by: Number((row && row.by) || 0),
+        bw: Number((row && row.bw) || 0),
+        bh: Number((row && row.bh) || 0),
         activated: false
       })
     } catch (e) {
@@ -1513,6 +1702,46 @@ Item {
   }
 
   Process {
+    id: wallpaperProc
+    property int token: 0
+    command: [
+      "bash", "-c",
+      'target=$(readlink -f "$1"); if [[ -e $target ]]; then printf "%s\\n" "$target"; else ' +
+      'find "$2" -maxdepth 1 -type f \\( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \\) | sort | head -n 1; fi',
+      "resolve", root.wallpaperLink, root.themeBackgrounds
+    ]
+    stdout: StdioCollector {
+      onStreamFinished: root.takeWallpaper(String(text || "").trim(), false, wallpaperProc.token)
+    }
+    onExited: function(exitCode) {
+      if (!root.wallpaperAgain)
+        return
+      root.wallpaperAgain = false
+      wallpaperProc.token = root.wallpaperGen
+      wallpaperProc.running = true
+    }
+  }
+
+  Process {
+    id: posterProc
+    property int token: 0
+    command: ["true"]
+    stdout: StdioCollector {
+      onStreamFinished: root.takeWallpaper(String(text || "").trim(), true, posterProc.token)
+    }
+    onExited: function(exitCode) {
+      if (!root.posterAgain)
+        return
+      root.posterAgain = false
+      posterProc.token = root.posterToken
+      posterProc.command = ["bash", root.posterScript(), root.posterPending]
+      posterProc.running = true
+    }
+  }
+
+  Component.onCompleted: root.resolveWallpaper()
+
+  Process {
     id: listProc
     command: [root.helper("list-windows")]
     stdout: SplitParser {
@@ -1602,33 +1831,116 @@ Item {
         id: visualStage
         anchors.fill: parent
         enabled: false
+        clip: true
         opacity: panel.contentRevealed ? root.reveal : 0
         scale: panel.contentRevealed ? root.reveal : 0.97
+        onWidthChanged: if (root.opened) root.syncBackdrop()
+        onHeightChanged: if (root.opened) root.syncBackdrop()
 
-        ScreencopyView {
-          id: shot
-          z: -2
-          // A full-screen capture of the monitor forwards pointer hits into the
-          // real desktop. It is only a blur source, never an input target.
-          enabled: false
+        // Under the window pictures. All, and a workstation with no windows,
+        // leave those pictures clear so this is what you see.
+        Item {
           anchors.fill: parent
-          opacity: 0
-          visible: root.opened
-          layer.enabled: root.opened
-          captureSource: root.opened ? panel.screen : null
-          live: false
-          paintCursor: false
+
+          BackgroundMedia {
+            id: wallpaper
+            anchors.fill: parent
+            path: root.wallpaperPath
+            cached: true
+            constrainDecode: true
+            decodeSize: Qt.size(width, height)
+          }
+
+          MultiEffect {
+            anchors.fill: parent
+            source: wallpaper
+            autoPaddingEnabled: false
+            blurEnabled: wallpaper.ready
+            blur: 0.75
+            blurMax: 64
+            blurMultiplier: 1.1
+            visible: wallpaper.ready
+            opacity: wallpaper.ready && !root.backdropWindows ? 1 : 0
+            Behavior on opacity {
+              NumberAnimation {
+                duration: Style.duration(180)
+                easing.type: Easing.Bezier
+                easing.bezierCurve: Style.easeOut
+              }
+            }
+          }
         }
 
-        MultiEffect {
-          z: -1
+        // One field for the picture on screen, one for the picture fading in.
+        Component {
+          id: backdropField
+          Item {
+            property var windows: []
+            Repeater {
+              model: windows
+              delegate: Item {
+                required property var modelData
+                x: modelData.px
+                y: modelData.py
+                width: Math.max(1, modelData.pw)
+                height: Math.max(1, modelData.ph)
+
+                ScreencopyView {
+                  id: piece
+                  anchors.fill: parent
+                  enabled: false
+                  opacity: 0
+                  captureSource: root.opened ? (root.waylandByAddress[modelData.address] || null) : null
+                  live: false
+                  paintCursor: false
+                  onCaptureSourceChanged: if (captureSource) captureFrame()
+                  Component.onCompleted: if (captureSource) captureFrame()
+                }
+
+                MultiEffect {
+                  anchors.fill: parent
+                  source: piece
+                  autoPaddingEnabled: true
+                  blurEnabled: piece.hasContent
+                  blur: 0.55
+                  blurMax: 48
+                  visible: piece.hasContent
+                }
+              }
+            }
+          }
+        }
+
+        Loader {
           anchors.fill: parent
-          source: shot
-          autoPaddingEnabled: true
-          blurEnabled: shot.hasContent
-          blur: 0.35
-          blurMax: 32
-          visible: shot.hasContent
+          sourceComponent: backdropField
+          active: root.opened
+          opacity: root.backdropShowFront && root.backdropWindows ? 1 : 0
+          Behavior on opacity {
+            enabled: !root.backdropInstant
+            NumberAnimation {
+              duration: Style.duration(180)
+              easing.type: Easing.Bezier
+              easing.bezierCurve: Style.easeOut
+            }
+          }
+          onLoaded: item.windows = Qt.binding(function() { return root.backdropFront })
+        }
+
+        Loader {
+          anchors.fill: parent
+          sourceComponent: backdropField
+          active: root.opened
+          opacity: !root.backdropShowFront && root.backdropWindows ? 1 : 0
+          Behavior on opacity {
+            enabled: !root.backdropInstant
+            NumberAnimation {
+              duration: Style.duration(180)
+              easing.type: Easing.Bezier
+              easing.bezierCurve: Style.easeOut
+            }
+          }
+          onLoaded: item.windows = Qt.binding(function() { return root.backdropBack })
         }
       }
 
@@ -2082,7 +2394,7 @@ Item {
         opacity: 0.66
         font.family: root.uiFont
         font.pixelSize: Style.font.caption
-        text: "Type to filter · Arrow keys to move · Enter to focus · Super+W to close · Esc to dismiss · Click or swipe for workspace"
+        text: "Type to filter · Arrow keys to move · Enter to focus · Super+W or Super+Q to close · Esc to dismiss · Super+Tab or swipe for workspace"
         z: 3
       }
 

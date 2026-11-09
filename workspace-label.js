@@ -130,6 +130,7 @@ function retargetWindow(rows, address, workspaceId) {
   var next = []
   var status = "missing"
   var i
+  var key
   for (i = 0; i < list.length; i++) {
     var row = list[i]
     if (!row || row.address !== clean) {
@@ -142,20 +143,74 @@ function retargetWindow(rows, address, workspaceId) {
       continue
     }
     status = "updated"
-    next.push({
-      address: row.address,
-      title: row.title,
-      app: row.app,
-      appLabel: row.appLabel,
-      workspace: String(id),
-      workspaceId: id,
-      monitorWorkspaceId: row.monitorWorkspaceId,
-      activated: row.activated
-    })
+    var moved = {}
+    for (key in row) {
+      if (Object.prototype.hasOwnProperty.call(row, key))
+        moved[key] = row[key]
+    }
+    moved.workspace = String(id)
+    moved.workspaceId = id
+    next.push(moved)
   }
   if (status !== "updated")
     return { rows: list, status: status }
   return { rows: next, status: status }
+}
+
+// Windows that belong in one workspace's blurred background. Special
+// workspaces are hidden while the grid is open, and a window on another
+// monitor would be placed against the wrong screen. A zero size has no place.
+function backdropWindows(rows, workspaceId, monitorId) {
+  var want = Number(workspaceId)
+  var mon = Number(monitorId)
+  var list = rows || []
+  var out = []
+  var i
+  if (!(want > 0))
+    return out
+  for (i = 0; i < list.length; i++) {
+    var row = list[i]
+    if (!row)
+      continue
+    if (!(Number(row.workspaceId) > 0))
+      continue
+    if (String(row.workspace || "").indexOf("special:") === 0)
+      continue
+    if (Number(row.workspaceId) !== want)
+      continue
+    if (mon >= 0 && Number(row.monitorId) !== mon)
+      continue
+    if (!(Number(row.bw) > 0) || !(Number(row.bh) > 0))
+      continue
+    out.push(row)
+  }
+  return out
+}
+
+// Place those windows in the overlay's coordinate space. bx/by/bw/bh are
+// Hyprland layout pixels relative to the monitor. scaleX/scaleY map them
+// onto the screen the grid is covering.
+function placeBackdrop(rows, workspaceId, monitorId, scaleX, scaleY) {
+  var sx = Number(scaleX)
+  var sy = Number(scaleY)
+  if (!(sx > 0))
+    sx = 1
+  if (!(sy > 0))
+    sy = 1
+  var picked = backdropWindows(rows, workspaceId, monitorId)
+  var out = []
+  var i
+  for (i = 0; i < picked.length; i++) {
+    var row = picked[i]
+    out.push({
+      address: row.address,
+      px: Number(row.bx) * sx,
+      py: Number(row.by) * sy,
+      pw: Number(row.bw) * sx,
+      ph: Number(row.bh) * sy
+    })
+  }
+  return out
 }
 
 function prettyApp(app, title) {

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url"
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const source = readFileSync(join(root, "workspace-label.js"), "utf8")
-const labels = runInNewContext(source + "\n({ slotOf, blockOf, pageLabel, workspaceIdForSlot, workspaceName, isPagerWorkspace, displayWorkspaceId, rowWorkspaceLabel, pageForWorkspaceId, pageNamesFor, movedWorkspaceId, retargetWindow, prettyApp })\n", {})
+const labels = runInNewContext(source + "\n({ slotOf, blockOf, pageLabel, workspaceIdForSlot, workspaceName, isPagerWorkspace, displayWorkspaceId, rowWorkspaceLabel, pageForWorkspaceId, pageNamesFor, movedWorkspaceId, retargetWindow, backdropWindows, placeBackdrop, prettyApp })\n", {})
 
 const slots = 10
 const left = 1
@@ -77,7 +77,23 @@ check("All labels the moved card as 4", labels.rowWorkspaceLabel(moved.rows[0], 
 check("the other card stays put", moved.rows[1], grid[1])
 const again = labels.retargetWindow(moved.rows, "0xaaa", 14)
 check("a second report of the same move is unchanged", again.status, "same")
+check("a move keeps the window's place on screen", labels.retargetWindow([
+  { address: "0xaaa", workspace: "11", workspaceId: 11, bx: 12, by: 20, bw: 400, bh: 300, monitorId: 1 }
+], "0xaaa", 14).rows[0].bw, 400)
 check("an unknown window is left for a full refresh", labels.retargetWindow(grid, "0xccc", 14).status, "missing")
 check("a special id is not a workstation move", labels.retargetWindow(grid, "0xaaa", -98).status, "ignored")
+
+const scene = [
+  { address: "0xaaa", workspace: "14", workspaceId: 14, monitorId: 1, bx: 10, by: 20, bw: 400, bh: 300 },
+  { address: "0xbbb", workspace: "11", workspaceId: 11, monitorId: 1, bx: 0, by: 0, bw: 200, bh: 100 },
+  { address: "0xccc", workspace: "special:qconsole", workspaceId: -98, monitorId: 1, bx: 0, by: 0, bw: 800, bh: 400 },
+  { address: "0xddd", workspace: "14", workspaceId: 14, monitorId: 2, bx: 0, by: 0, bw: 500, bh: 500 },
+  { address: "0xeee", workspace: "14", workspaceId: 14, monitorId: 1, bx: 0, by: 0, bw: 0, bh: 100 }
+]
+check("workspace 14 on this screen is one window", labels.backdropWindows(scene, 14, 1).map((row) => row.address), ["0xaaa"])
+check("the placed window follows the screen scale", labels.placeBackdrop(scene, 14, 1, 2, 2), [
+  { address: "0xaaa", px: 20, py: 40, pw: 800, ph: 600 }
+])
+check("an empty workspace has no backdrop windows", labels.placeBackdrop(scene, 15, 1, 1, 1), [])
 
 console.log("workspace-label: ok")

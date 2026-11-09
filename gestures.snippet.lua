@@ -43,7 +43,9 @@ hl.gesture({
 -- While the grid is open, left and right page its workspace filter.
 -- All is the leftmost page, then workspace 1, 2, 3, and so on.
 -- Right walks forward. Left walks back toward All. The desktop workspace
--- stays put. When the grid is closed, the same swipes still move workspace.
+-- stays put. All and an empty workstation show the blurred wallpaper.
+-- A workstation with windows shows those windows. When the grid is closed,
+-- the same swipes still move workspace.
 local function nitty_griddy_mapped()
   local layers = hl.get_layers({ namespace = "timsonner-nitty-griddy" })
   return layers ~= nil and #layers > 0
