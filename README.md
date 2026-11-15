@@ -43,6 +43,8 @@ Quickshell ships with Omarchy. Live thumbnails need Hyprland toplevel export. Wi
 omarchy plugin add https://github.com/timsonner/nitty-griddy --enable --yes
 ```
 
+If an AI agent is doing the install for you, point it at `AGENTS.md`.
+
 That clones the plugin to `~/.config/omarchy/plugins/timsonner.nitty-griddy/`. Plugin id: `timsonner.nitty-griddy`.
 
 ## Swipes and shortcuts
@@ -57,9 +59,11 @@ require("default.hypr.omarchy")
 require("hypr.gestures")
 ```
 
-Stock Omarchy does not register three-finger gestures, so do not unset them. `action = "unset"` on a gesture nothing registered is a config error. Hyprland keeps the first gesture for a fingers-and-direction pair, so this file should be the only three-finger set in the user config.
+Hyprland keeps the first gesture for a fingers-and-direction pair, so this file should be the only three-finger set in the user config.
 
-Do not add `omarchy_default_gestures = false` yourself. If an update inserts that line because it saw `hl.gesture` in `~/.config/hypr`, leave it. This file binds all four directions, so the swipes still work. Deleting the line lets later Omarchy defaults register first, and these binds will not replace them.
+On Omarchy 4.5 and the edge channel, Omarchy registers its own three-finger swipes: left and right switch workspace, up opens the AI console, and down opens the Omarchy menu. The snippet unsets those four before binding its own, and only when Omarchy actually loaded them, following Omarchy's manual for changing a default gesture. With the snippet in place, three-finger up and down open and dismiss the grid instead of the AI console and the menu. Omarchy's four-finger swipes are not touched. On Omarchy 4.0 nothing is unset, because `action = "unset"` on a gesture nothing registered is a config error.
+
+Do not add `omarchy_default_gestures = false` yourself. If an Omarchy migration inserted that line because it saw `hl.gesture` in `~/.config/hypr`, leave it. Omarchy's gestures then never load, the snippet skips its unset, and its four binds still work.
 
 ```sh
 hyprctl reload
@@ -147,9 +151,13 @@ omarchy plugin validate ~/.config/omarchy/plugins/timsonner.nitty-griddy
 
 In a checkout of this repo, `./validate` checks the manifest, the helpers, and the workspace-number rules without a running shell.
 
+### Upgrading Omarchy
+
+If you copied the snippet before this change and then moved from Omarchy 4.0 to 4.5, or from stable to edge, Hyprland can show "Gesture will be overshadowed by a previous gesture" for up, down, left, and right. Copy the current `gestures.snippet.lua` over `~/.config/hypr/gestures.lua` again, then run `hyprctl reload`.
+
 ## Troubleshooting
 
-**`hyprctl configerrors` mentions a gesture.** Up or down is bound twice, or an unset names a gesture nothing registered. Keep one bind for each direction.
+**`hyprctl configerrors` mentions a gesture.** "Previous UP shadows new UP" (or DOWN, LEFT, RIGHT) means Omarchy's own three-finger gesture registered first. Copy the current snippet again; see Upgrading Omarchy. Otherwise a direction is bound twice in your own config, or an unset names a gesture nothing registered. Keep one bind for each direction.
 
 **Swipe does nothing after a shell restart.** The shell is not seeing the socket2 event. In the gesture functions, replace the `hl.dispatch(hl.dsp.event(...))` lines with summon and hide. Use `hl.dispatch(hl.dsp.exec_cmd(...))`. A bare `hl.dsp.exec_cmd()` only builds a dispatcher and does not run. `exec_cmd` goes through a shell, which is what the `'{}'` payload needs.
 
