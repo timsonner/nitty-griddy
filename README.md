@@ -43,6 +43,8 @@ Quickshell ships with Omarchy. Live thumbnails need Hyprland toplevel export. Wi
 omarchy plugin add https://github.com/timsonner/nitty-griddy --enable --yes
 ```
 
+If an AI agent is doing the install for you, point it at `AGENTS.md`.
+
 That clones the plugin to `~/.config/omarchy/plugins/timsonner.nitty-griddy/`. Plugin id: `timsonner.nitty-griddy`.
 
 ## Swipes and shortcuts
