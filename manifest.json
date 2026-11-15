@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "timsonner.nitty-griddy",
   "name": "NittyGriddy",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Tim Sonner",
   "license": "MIT",
   "description": "Window grid for Omarchy. Lists windows on the focused screen and keeps workspace numbers 1-9, even when empty. The number stays visible when a title is long, and the quake console uses the workstation of the screen it is on. Snippets add the swipes and Super+W / Super+Shift+number. Three-finger up opens the grid and down dismisses it. Left and right switch workspaces when the grid is closed, and page the strip when it is open.",

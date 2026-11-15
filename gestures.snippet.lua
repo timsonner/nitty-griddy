@@ -8,18 +8,28 @@
 --
 -- The require has to run after Omarchy's defaults.
 --
--- Stock Omarchy does not register three-finger gestures, so there is
--- nothing to unset. action = "unset" on a missing gesture is a config error
--- ("Can't remove a non-existent gesture").
--- This file binds all four directions. If a later Omarchy writes
--- omarchy_default_gestures = false because it saw hl.gesture here, leave
--- that line. Deleting it lets Omarchy's defaults register first, and
--- Hyprland keeps those instead of these.
+-- Omarchy 4.0 registers no three-finger gestures. Omarchy 4.5 and edge
+-- register all four (left/right switch workspace, up opens the AI console,
+-- down opens the Omarchy menu), and Hyprland keeps the first gesture for a
+-- fingers-and-direction pair. So the block below unsets Omarchy's four only
+-- when Omarchy actually loaded them. On 4.0, or when
+-- omarchy_default_gestures = false is set, nothing is unset, because
+-- action = "unset" on a missing gesture is a config error.
+-- Omarchy's four-finger gestures are left alone.
+--
+-- Do not add omarchy_default_gestures = false yourself. If an Omarchy
+-- migration added it because it saw hl.gesture here, leave it.
 --
 -- Up opens. Down dismisses. Down does nothing when the overview is already
 -- closed: it does not bring back the quake console or the Omarchy menu.
 -- Hyprland will not accept a second gesture on the same fingers and direction,
 -- so this file should be the only up/down pair in the user config.
+
+if package.loaded["default.hypr.gestures"] then
+  for _, direction in ipairs({ "up", "down", "left", "right" }) do
+    hl.gesture({ fingers = 3, direction = direction, action = "unset" })
+  end
+end
 
 hl.gesture({
   fingers = 3,

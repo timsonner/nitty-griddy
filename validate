@@ -71,10 +71,12 @@ grep -q 'function stepWorkspace' Overview.qml || fail "overview stepWorkspace"
 if grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -q 'omarchy_default_gestures'; then
   fail "snippet must not set omarchy_default_gestures"
 fi
-# Unset is a config error when up and down are not already registered.
-if grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -q 'action = "unset"'; then
-  fail "snippet must not register action = unset"
-fi
+# Unset is a config error when Omarchy did not register the gesture, so the
+# only unset allowed is the one guarded by Omarchy's gestures module.
+grep -q 'if package.loaded\["default.hypr.gestures"\] then' gestures.snippet.lua || fail "snippet must guard unset on Omarchy's gestures module"
+unsets=$(grep -vE '^[[:space:]]*--' gestures.snippet.lua | grep -c 'action = "unset"' || true)
+[[ $unsets -eq 1 ]] || fail "snippet must have exactly one guarded unset"
+awk '/if package.loaded\["default.hypr.gestures"\] then/{g=1} g&&/action = "unset"/{ok=1} /^end/{g=0} END{exit !ok}' gestures.snippet.lua || fail "unset must sit inside the Omarchy gestures guard"
 grep -q 'shell summon' gestures.snippet.lua || fail "snippet should document summon fallback"
 grep -q 'shell hide' gestures.snippet.lua || fail "snippet should document hide fallback"
 if grep -vE '^[[:space:]]*--' bindings.snippet.lua | grep -q 'SUPER + A'; then
